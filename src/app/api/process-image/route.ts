@@ -129,6 +129,11 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string): P
       preserve_hands: true,
       preserve_aspect_ratio: true,
       preserve_resolution: true,
+      // Stronger instructions to avoid cropping the head/face: expand canvas or pad when needed
+      expand_canvas: true,
+      canvas_padding: 0.18, // pad 18% around the detected subject to avoid tight crops
+      face_padding: 0.22, // ensure additional space around the face
+      keep_head_in_frame: true,
       crop_style: "full_body", // Keep full body/face when possible
       hand_position: "natural",
       // Use inpainting/mask-based blending to minimize distortion of person
@@ -136,8 +141,8 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string): P
       inpaint_mode: "auto_mask",
       blend_mode: "seamless",
       guidance_scale: 7.5,
-      num_inference_steps: 20,
-      image_strength: 0.75,
+      num_inference_steps: 22,
+      image_strength: 0.72,
     } as any;
 
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
@@ -193,7 +198,7 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
 
     const requestBody = {
       // Provide a clear prompt to the model to minimize distortion
-      prompt: `Inpaint the original person image to add ${dish} in the person's hand. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. Keep background and skin tones consistent. Use mask-based inpainting to insert the product naturally.`,
+      prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. If necessary, expand the canvas and pad the image so the full head remains visible. Keep background and skin tones consistent. Use mask-based inpainting to insert the product naturally.`,
       source_image_url: imageUrl,
       product_image_url: await getProductImageUrl(dish),
       // Ask the API to preserve size/aspect where possible
@@ -201,11 +206,15 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       preserve_hands: true,
       preserve_aspect_ratio: true,
       preserve_resolution: true,
+      expand_canvas: true,
+      canvas_padding: 0.18,
+      face_padding: 0.22,
       inpaint: true,
       inpaint_mode: 'mask_based',
       blend_mode: 'seamless',
       image_size: 'original',
-      num_inference_steps: 25,
+      resize_mode: 'pad',
+      num_inference_steps: 28,
       guidance_scale: 8,
       enable_safety_checker: true,
       seed: Math.floor(Math.random() * 1000000),
