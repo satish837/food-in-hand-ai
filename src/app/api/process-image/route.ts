@@ -115,26 +115,38 @@ async function processWithReplicate(imageUrl: string, dish: string, apiToken: st
 
 async function processWithFal(imageUrl: string, dish: string, apiKey: string): Promise<string> {
   try {
-    console.log('Processing with Fal.ai Product Holding model:', { dish, imageUrl: imageUrl.substring(0, 50) + '...' });
-    
-    // Use the specialized product-holding model with additional settings to preserve face
+    console.log('Processing with Fal.ai Product Holding model (enhanced preservation):', { dish, imageUrl: imageUrl.substring(0, 80) + '...' });
+
+    // Use the specialized product-holding model with stronger preservation and inpainting hints
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout for this model
-    
+
+    const requestBody = {
+      person_image_url: imageUrl,
+      product_image_url: await getProductImageUrl(dish),
+      // Preservation flags — instruct the model to avoid altering face/hands and keep aspect
+      preserve_face: true,
+      preserve_hands: true,
+      preserve_aspect_ratio: true,
+      preserve_resolution: true,
+      crop_style: "full_body", // Keep full body/face when possible
+      hand_position: "natural",
+      // Use inpainting/mask-based blending to minimize distortion of person
+      inpaint: true,
+      inpaint_mode: "auto_mask",
+      blend_mode: "seamless",
+      guidance_scale: 7.5,
+      num_inference_steps: 20,
+      image_strength: 0.75,
+    } as any;
+
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
       method: 'POST',
       headers: {
         'Authorization': `Key ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        person_image_url: imageUrl,
-        product_image_url: await getProductImageUrl(dish),
-        // Additional parameters to preserve the full image including face
-        preserve_face: true,
-        crop_style: "full_body", // Try to preserve full body/face
-        hand_position: "natural", // Natural hand position
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
@@ -143,56 +155,69 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string): P
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Fal.ai Product Holding API error response:', errorText);
-      
+
       // If the specialized model fails, fallback to a different approach
       console.log('Product holding model failed, trying alternative approach...');
       return await processWithAlternativeApproach(imageUrl, dish, apiKey);
     }
 
     const data = await response.json();
-    console.log('Fal.ai Product Holding response:', data);
-    
+    console.log('Fal.ai Product Holding response:', Array.isArray(data.images) ? `images:${data.images.length}` : JSON.stringify(data).slice(0, 200));
+
     if (data.images && data.images.length > 0) {
       console.log('Successfully generated product holding image:', data.images[0].url);
       return data.images[0].url;
     } else {
-      console.error('No images in response:', data);
-      throw new Error('No images returned from Fal.ai API');
+      console.error('No images in response or unexpected format:', data);
+      // Try alternative approach before failing
+      return await processWithAlternativeApproach(imageUrl, dish, apiKey);
     }
-  } catch (error) {
-    if (error.name === 'AbortError') {
+  } catch (error: any) {
+    if (error && error.name === 'AbortError') {
       console.error('Fal.ai API timeout');
       throw new Error('Request timed out. Please try again.');
     }
-    console.error('Fal.ai API error:', error);
+    console.error('Fal.ai API error (enhanced):', error);
     // Fallback to alternative approach
     return await processWithAlternativeApproach(imageUrl, dish, apiKey);
   }
 }
 
-// Alternative approach using inpainting to preserve the full image
+// Alternative approach using inpainting and explicit preservation hints
 async function processWithAlternativeApproach(imageUrl: string, dish: string, apiKey: string): Promise<string> {
   try {
-    console.log('Using alternative approach to preserve face...');
-    
-    // Use a different model that can do inpainting while preserving the full image
+    console.log('Using alternative approach (inpainting-focused) to preserve face and hands...');
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-    
+    const timeoutId = setTimeout(() => controller.abort(), 70000);
+
+    const requestBody = {
+      // Provide a clear prompt to the model to minimize distortion
+      prompt: `Inpaint the original person image to add ${dish} in the person's hand. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. Keep background and skin tones consistent. Use mask-based inpainting to insert the product naturally.`,
+      source_image_url: imageUrl,
+      product_image_url: await getProductImageUrl(dish),
+      // Ask the API to preserve size/aspect where possible
+      preserve_face: true,
+      preserve_hands: true,
+      preserve_aspect_ratio: true,
+      preserve_resolution: true,
+      inpaint: true,
+      inpaint_mode: 'mask_based',
+      blend_mode: 'seamless',
+      image_size: 'original',
+      num_inference_steps: 25,
+      guidance_scale: 8,
+      enable_safety_checker: true,
+      seed: Math.floor(Math.random() * 1000000),
+    } as any;
+
     const response = await fetch('https://fal.run/fal-ai/flux/dev', {
       method: 'POST',
       headers: {
         'Authorization': `Key ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        prompt: `A person holding ${dish} in their hand, full body visible including face, realistic, high quality, professional photography, natural lighting, detailed, photorealistic, full frame composition`,
-        image_size: "landscape_4_3", // Use landscape format to preserve more of the image
-        num_inference_steps: 20,
-        guidance_scale: 7.5,
-        enable_safety_checker: true,
-        seed: Math.floor(Math.random() * 1000000),
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
@@ -205,16 +230,17 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
     }
 
     const data = await response.json();
-    console.log('Alternative approach response:', data);
-    
+    console.log('Alternative approach response:', Array.isArray(data.images) ? `images:${data.images.length}` : JSON.stringify(data).slice(0,200));
+
     if (data.images && data.images.length > 0) {
       console.log('Successfully generated alternative image:', data.images[0].url);
       return data.images[0].url;
     } else {
+      console.error('No images returned from alternative approach:', data);
       throw new Error('No images returned from alternative approach');
     }
-  } catch (error) {
-    console.error('Alternative approach error:', error);
+  } catch (error: any) {
+    console.error('Alternative approach error (inpainting-focused):', error);
     throw error;
   }
 }
