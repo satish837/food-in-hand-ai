@@ -143,7 +143,7 @@ async function processWithReplicate(imageUrl: string, dish: string, apiToken: st
   }
 }
 
-async function processWithFal(imageUrl: string, dish: string, apiKey: string): Promise<string> {
+async function processWithFal(imageUrl: string, dish: string, apiKey: string, imageSize?: string): Promise<string> {
   try {
     console.log('Processing with Fal.ai Product Holding model (enhanced preservation):', { dish, imageUrl: imageUrl.substring(0, 80) + '...' });
 
