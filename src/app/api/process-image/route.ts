@@ -12,8 +12,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Process the image with AI
-    const processedImageUrl = await processImageWithAI(imageUrl, dish);
+    // Process the image with AI. Pass the incoming request so we can build absolute URLs for temp images
+    const processedImageUrl = await processImageWithAI(imageUrl, dish, request);
 
     return NextResponse.json({
       success: true,
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processImageWithAI(imageUrl: string, dish: string): Promise<string> {
+async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest): Promise<string> {
   // Check if we have API keys available
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   const falKey = process.env.FAL_KEY;
@@ -38,9 +38,9 @@ async function processImageWithAI(imageUrl: string, dish: string): Promise<strin
   if (removeBgKey) {
     try {
       console.log('Removing background using remove.bg');
-      const bgRemoved = await removeBackground(imageUrl, removeBgKey);
+      const bgRemoved = await removeBackground(imageUrl, removeBgKey, request);
       if (bgRemoved) {
-        console.log('Background removed successfully, using bg-removed image for processing');
+        console.log('Background removed successfully, using bg-removed image for processing:', bgRemoved);
         imageUrl = bgRemoved;
       }
     } catch (err) {
@@ -294,7 +294,7 @@ async function getProductImageUrl(dish: string): Promise<string> {
 }
 
 // Remove background using remove.bg API and return a data URL (base64) on success
-async function removeBackground(imageUrl: string, apiKey: string): Promise<string | null> {
+async function removeBackground(imageUrl: string, apiKey: string, request?: NextRequest): Promise<string | null> {
   try {
     const form = new FormData();
     form.append('image_url', imageUrl);
@@ -317,8 +317,30 @@ async function removeBackground(imageUrl: string, apiKey: string): Promise<strin
     const contentType = response.headers.get('content-type') || 'image/png';
     const arrayBuffer = await response.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
-    const dataUrl = `data:${contentType};base64,${base64}`;
-    return dataUrl;
+
+    // To let Fal.ai fetch the bg-removed image, store it temporarily via our own API
+    if (!request) {
+      // If we don't have the request to build an origin, fallback to data URL
+      const dataUrl = `data:${contentType};base64,${base64}`;
+      return dataUrl;
+    }
+
+    const origin = new URL(request.url).origin;
+    // POST to our internal temp-image API to create a public endpoint for this binary
+    const tempResp = await fetch(`${origin}/api/temp-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64: base64, contentType }),
+    });
+
+    if (!tempResp.ok) {
+      console.error('Failed to store temp image:', await tempResp.text());
+      // Fallback to data URL
+      return `data:${contentType};base64,${base64}`;
+    }
+
+    const tempData = await tempResp.json();
+    return tempData.url || null;
   } catch (error) {
     console.error('removeBackground error:', error);
     return null;
