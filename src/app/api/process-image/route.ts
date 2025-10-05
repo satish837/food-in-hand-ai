@@ -221,6 +221,12 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       force_product_placement: true,
       placement_hint: "place the product naturally in the subject's visible hand; ensure visible contact and natural grip",
       positive_prompt: `Ensure the ${dish} is present and clearly held by the person in a natural way.`,
+      // Requirements to force product visibility
+      required_objects: ['product'],
+      min_product_visibility: 0.6,
+      product_prominence: 'high',
+      product_scale: 'natural',
+      placement_target: ['right_hand','left_hand'],
       // Clear instruction for the model
       instructions: `Place the ${dish} into the original person's hand. Do NOT add another person or duplicate the subject. Preserve the person's face and hands and their proportions. Keep background transparent. Make sure the product is clearly visible and in contact with the subject's hand.`,
     } as any;
