@@ -201,25 +201,28 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       output_transparency: true,
       // Stronger instructions to avoid cropping the head/face: expand canvas or pad when needed
       expand_canvas: true,
-      canvas_padding: 0.18, // pad 18% around the detected subject to avoid tight crops
-      face_padding: 0.22, // ensure additional space around the face
+      canvas_padding: 0.18,
+      face_padding: 0.22,
       keep_head_in_frame: true,
-      crop_style: "full_body", // Keep full body/face when possible
+      crop_style: "full_body",
       hand_position: "natural",
-      // Important: do NOT create extra persons or duplicate the subject
+      // Important: try to avoid creating extra persons or duplication
       single_person_only: true,
       no_duplication: true,
       // Use inpainting/mask-based blending to minimize distortion of person
       inpaint: true,
       inpaint_mode: "auto_mask",
       blend_mode: "seamless",
-      guidance_scale: 7.5,
-      num_inference_steps: 30,
-      image_strength: 0.68,
-      // Add explicit textual instructions for the model
-      instructions: `Place the ${dish} into the original person's hand. Do NOT add another person, do NOT duplicate or mirror the subject. Preserve the original person's face, hands, and proportions. Keep background transparent. Remove any extra arms, hands, or mirrored duplicates.`,
-      // Negative prompts to avoid duplication/artifacts
-      negative_prompt: "duplicate person, extra person, mirrored duplicate, extra arms, extra hands, severed limbs, multiple people, cloned subject, ghosting",
+      guidance_scale: 8.5,
+      num_inference_steps: 32,
+      image_strength: 0.6,
+      // Force product placement and provide detailed placement hints
+      force_product: true,
+      force_product_placement: true,
+      placement_hint: "place the product naturally in the subject's visible hand; ensure visible contact and natural grip",
+      positive_prompt: `Ensure the ${dish} is present and clearly held by the person in a natural way.`,
+      // Clear instruction for the model
+      instructions: `Place the ${dish} into the original person's hand. Do NOT add another person or duplicate the subject. Preserve the person's face and hands and their proportions. Keep background transparent. Make sure the product is clearly visible and in contact with the subject's hand.`,
     } as any;
 
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
