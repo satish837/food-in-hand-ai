@@ -428,6 +428,43 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     const size = arrayBuffer.byteLength;
 
+    // If Cloudinary credentials are available, upload the bg-removed image there and return the secure URL
+    const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+    const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
+    const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
+
+    if (CLOUD_NAME && CLOUD_KEY && CLOUD_SECRET) {
+      try {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const crypto = await import('crypto');
+        const toSign = `timestamp=${timestamp}${CLOUD_SECRET}`;
+        const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+        const cloudForm = new FormData();
+        cloudForm.append('file', `data:${contentType};base64,${base64}`);
+        cloudForm.append('api_key', CLOUD_KEY);
+        cloudForm.append('timestamp', String(timestamp));
+        cloudForm.append('signature', signature);
+
+        const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+          method: 'POST',
+          body: cloudForm as any,
+        });
+
+        if (cloudResp.ok) {
+          const cloudData = await cloudResp.json();
+          if (cloudData && cloudData.secure_url) {
+            return { url: cloudData.secure_url, status: cloudResp.status, size };
+          }
+        } else {
+          const txt = await cloudResp.text();
+          console.error('Cloudinary upload failed:', cloudResp.status, txt);
+        }
+      } catch (err) {
+        console.error('Cloudinary upload error:', err);
+      }
+    }
+
     // To let Fal.ai fetch the bg-removed image, store it temporarily via our own API
     if (!request) {
       // If we don't have the request to build an origin, fallback to data URL
