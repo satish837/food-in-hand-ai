@@ -107,7 +107,17 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
       diagnostics.replicate = { error: String(error) };
       // Fallback to demo mode if API fails
       await new Promise(resolve => setTimeout(resolve, 2000));
-      return { processedImageUrl: imageUrl, diagnostics };
+      let finalUrl = imageUrl;
+      if (removeBgKey) {
+        try {
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) finalUrl = bgResult.url;
+        } catch (err) {
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+      return { processedImageUrl: finalUrl, diagnostics };
     }
   } else {
     // Fallback: simulate processing for demo
