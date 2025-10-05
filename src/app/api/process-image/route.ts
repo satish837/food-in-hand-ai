@@ -60,7 +60,7 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
   if (falKey) {
     try {
       console.log('Using Fal.ai API for image processing');
-      const url = await processWithFal(imageUrl, dish, falKey);
+      const url = await processWithFal(imageUrl, dish, falKey, imageSizeOption);
       diagnostics.fal = { used: true };
       return { processedImageUrl: url, diagnostics };
     } catch (error) {
