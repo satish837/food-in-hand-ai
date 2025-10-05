@@ -67,17 +67,38 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
       // Optional stylize step (e.g., 1970s retro poster)
       if (style && falKey) {
         try {
-          console.log('Applying stylize step with style:', style);
-          const styled = await stylizeImage(finalUrl, style, falKey, imageSizeOption);
-          diagnostics.stylize = { url: styled };
+          console.log('Applying stylize step (composite original person over stylized background) with style:', style);
 
-          if (styled) {
-            // Upload stylized layer and original to Cloudinary and composite them
+          // Ensure we have the Fal.ai processed image (before background removal) to extract the person with product
+          const falProcessedImage = url; // original Fal.ai output (full image)
+
+          // 1) Get transparent person (with product) from processed Fal.ai image
+          let personResult = await removeBackground(falProcessedImage, removeBgKey, request);
+          let personUrl = personResult && personResult.url ? personResult.url : null;
+
+          // If removeBackground failed on processed image, try on finalUrl
+          if (!personUrl) {
+            const tryPerson = await removeBackground(finalUrl, removeBgKey, request);
+            personUrl = tryPerson && tryPerson.url ? tryPerson.url : null;
+            diagnostics.removeBgPersonFallback = tryPerson || null;
+          }
+
+          if (!personUrl) {
+            console.warn('Could not obtain transparent person; skipping composite stylize and using stylized full image');
+            const styledFull = await stylizeImage(finalUrl, style, falKey, imageSizeOption);
+            diagnostics.stylize = { url: styledFull };
+            if (styledFull) finalUrl = styledFull;
+          } else {
+            // 2) Generate a stylized background (text-to-image) using Fal.ai with prompt only
+            const bgPrompt = `1970s retro poster background, warm color palette, halftone textures, bold shapes, vintage typography elements, clean central area for subject placement`;
+            const styledBg = await stylizeImage(null, style + ' background', falKey, imageSizeOption);
+            diagnostics.stylize = { background: styledBg };
+
+            // Upload both to Cloudinary and composite: overlay person over background
             const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
             const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
             const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
 
-            // helper to upload via Cloudinary (accepts URL or data URL)
             async function uploadToCloudinary(imgUrl: string) {
               if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) return null;
               try {
@@ -111,24 +132,24 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
               }
             }
 
-            const uploadedStyled = await uploadToCloudinary(styled);
-            const uploadedOriginal = await uploadToCloudinary(finalUrl);
+            const uploadedBg = styledBg ? await uploadToCloudinary(styledBg) : null;
+            const uploadedPerson = await uploadToCloudinary(personUrl);
 
-            if (uploadedStyled && uploadedOriginal) {
+            if (uploadedBg && uploadedPerson) {
+              const bgId = uploadedBg.public_id;
+              const personId = uploadedPerson.public_id;
               const CLOUD_NAME_ENV = process.env.CLOUDINARY_CLOUD_NAME;
-              const styledId = uploadedStyled.public_id;
-              const originalId = uploadedOriginal.public_id;
-              // Build Cloudinary composite URL: overlay styled onto original
-              const compositeUrl = `https://res.cloudinary.com/${CLOUD_NAME_ENV}/image/upload/l_${encodeURIComponent(styledId)},fl_layer_apply/${originalId}.png`;
+              // Composite person over background (person should be exact original PNG with transparency)
+              const compositeUrl = `https://res.cloudinary.com/${CLOUD_NAME_ENV}/image/upload/l_${encodeURIComponent(personId)},fl_layer_apply/${bgId}.png`;
               finalUrl = compositeUrl;
-              diagnostics.composite = { styled: uploadedStyled, original: uploadedOriginal, compositeUrl };
+              diagnostics.composite = { background: uploadedBg, person: uploadedPerson, compositeUrl };
             } else {
-              // fallback to use styled image directly
-              finalUrl = styled;
+              // fallback: if upload failed, just use styledBg or personUrl
+              finalUrl = uploadedBg ? uploadedBg.secure_url : (personUrl || finalUrl);
             }
           }
         } catch (err) {
-          console.error('Stylize step failed:', err);
+          console.error('Stylize composite step failed:', err);
           diagnostics.stylize = { error: String(err) };
         }
       }
