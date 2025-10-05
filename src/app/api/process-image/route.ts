@@ -36,21 +36,6 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
   const removeBgKey = process.env.REMOVE_BG_API_KEY;
   const diagnostics: any = { removeBg: null, fal: null, replicate: null };
 
-  // If remove.bg key is provided, attempt to remove background first
-  if (removeBgKey) {
-    try {
-      console.log('Removing background using remove.bg');
-      const bgResult = await removeBackground(imageUrl, removeBgKey, request);
-      diagnostics.removeBg = bgResult;
-      if (bgResult && bgResult.url) {
-        console.log('Background removed successfully, using bg-removed image for processing:', bgResult.url);
-        imageUrl = bgResult.url;
-      }
-    } catch (err) {
-      console.error('remove.bg failed, proceeding with original image:', err);
-      diagnostics.removeBg = { error: String(err) };
-    }
-  }
 
   // Detect image size for Fal.ai
   let imageSizeOption = await detectFalImageSize(imageUrl, request);
