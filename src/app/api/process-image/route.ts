@@ -205,7 +205,7 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
     } else {
       console.error('No images in response or unexpected format:', data);
       // Try alternative approach before failing
-      return await processWithAlternativeApproach(imageUrl, dish, apiKey);
+      return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
     }
   } catch (error: any) {
     if (error && error.name === 'AbortError') {
