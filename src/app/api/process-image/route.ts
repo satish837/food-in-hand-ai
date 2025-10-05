@@ -371,6 +371,53 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
   }
 }
 
+// Stylize an image (image-to-image) using Fal.ai
+async function stylizeImage(imageUrl: string, style: string, apiKey: string, imageSize?: string): Promise<string | null> {
+  try {
+    console.log('Stylizing image with style:', style, imageUrl.substring(0,80));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    const requestBody: any = {
+      prompt: `Convert the input photo into a ${style} style poster. Use limited warm color palette, halftone textures, bold shapes and typography reminiscent of 1970s poster design. Keep the subject recognizable and emphasize the product in hand. Preserve transparency where possible.`,
+      source_image_url: imageUrl,
+      preserve_alpha: true,
+      background: 'transparent',
+      output_transparency: true,
+      image_size: imageSize || 'landscape_4_3',
+      resize_mode: 'pad',
+      num_inference_steps: 30,
+      guidance_scale: 7.5,
+      style: style,
+    };
+
+    const resp = await fetch('https://fal.run/fal-ai/flux/dev', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error('stylizeImage failed:', resp.status, txt);
+      return null;
+    }
+
+    const data = await resp.json();
+    if (data.images && data.images.length > 0) return data.images[0].url;
+    return null;
+  } catch (err) {
+    console.error('stylizeImage error:', err);
+    return null;
+  }
+}
+
 // --- Image helpers: fetch buffer, detect dimensions, map to Fal.ai image_size
 async function fetchImageBuffer(imageUrl: string, request?: NextRequest): Promise<Buffer | null> {
   try {
