@@ -298,11 +298,17 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       blend_mode: 'seamless',
       image_size: imageSize || 'landscape_4_3',
       resize_mode: 'pad',
-      num_inference_steps: 36,
-      guidance_scale: 9,
+      num_inference_steps: 38,
+      guidance_scale: 9.5,
       enable_safety_checker: true,
       seed: Math.floor(Math.random() * 1000000),
-      negative_prompt: "extra arms, extra hands, duplicated limbs, duplicate person, mirrored subject, multiple people, cloned subject, ghosting, artifact",
+      // Enforce product presence and placement
+      force_product: true,
+      force_product_placement: true,
+      placement_hint: "place the product clearly into the subject's visible hand with natural contact",
+      positive_prompt: `Ensure the ${dish} is visible, clearly held by the subject, and not removed by denoising.`,
+      // Keep negative prompts but avoid removing the product
+      negative_prompt: "duplicate person, mirrored duplicate, multiple people, cloned subject, ghosting, artifact",
     } as any;
 
     const response = await fetch('https://fal.run/fal-ai/flux/dev', {
