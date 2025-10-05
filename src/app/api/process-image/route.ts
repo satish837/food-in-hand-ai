@@ -308,7 +308,20 @@ async function getProductImageUrl(dish: string): Promise<string> {
 async function removeBackground(imageUrl: string, apiKey: string, request?: NextRequest): Promise<{ url: string | null; status: number | null; errorText?: string; size?: number }> {
   try {
     const form = new FormData();
-    form.append('image_url', imageUrl);
+
+    // If imageUrl is a data URL (base64), upload as a file. Otherwise, provide remote URL.
+    const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
+    if (dataUrlMatch) {
+      const contentType = dataUrlMatch[1];
+      const base64 = dataUrlMatch[2];
+      const buf = Buffer.from(base64, 'base64');
+      // Create a Blob from the buffer for FormData (works in Next.js runtime)
+      const blob = new Blob([buf], { type: contentType });
+      form.append('image_file', blob, 'upload.jpg');
+    } else {
+      form.append('image_url', imageUrl);
+    }
+
     form.append('size', 'auto');
 
     const response = await fetch('https://api.remove.bg/v1.0/removebg', {
