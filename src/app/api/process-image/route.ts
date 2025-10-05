@@ -242,7 +242,7 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       inpaint: true,
       inpaint_mode: 'mask_based',
       blend_mode: 'seamless',
-      image_size: 'original',
+      image_size: imageSize || 'landscape_4_3',
       resize_mode: 'pad',
       num_inference_steps: 28,
       guidance_scale: 8,
