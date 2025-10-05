@@ -52,6 +52,10 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
     }
   }
 
+  // Detect image size for Fal.ai
+  let imageSizeOption = await detectFalImageSize(imageUrl, request);
+  diagnostics.imageSize = imageSizeOption;
+
   // Prioritize Fal.ai since it's faster and more reliable
   if (falKey) {
     try {
