@@ -275,7 +275,7 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
 
     const requestBody = {
       // Provide a clear prompt to the model to minimize distortion
-      prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. If necessary, expand the canvas and pad the image so the full head remains visible. Keep background transparent. IMPORTANT: Do NOT add another person or duplicate the subject; only modify the existing person to hold the product.`,
+      prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. If necessary, expand the canvas and pad the image so the full head remains visible. Keep background transparent. IMPORTANT: Do NOT add another person or duplicate the subject; only modify the existing person to hold the product. Remove any extra arms or duplicated limbs.`,
       source_image_url: imageUrl,
       product_image_url: await getProductImageUrl(dish),
       // Ask the API to preserve size/aspect where possible
@@ -295,10 +295,11 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       blend_mode: 'seamless',
       image_size: imageSize || 'landscape_4_3',
       resize_mode: 'pad',
-      num_inference_steps: 28,
-      guidance_scale: 8,
+      num_inference_steps: 36,
+      guidance_scale: 9,
       enable_safety_checker: true,
       seed: Math.floor(Math.random() * 1000000),
+      negative_prompt: "extra arms, extra hands, duplicated limbs, duplicate person, mirrored subject, multiple people, cloned subject, ghosting, artifact",
     } as any;
 
     const response = await fetch('https://fal.run/fal-ai/flux/dev', {
