@@ -129,35 +129,7 @@ export default function DemoPage() {
           </div>
         )}
 
-        {/* Features */}
-        <div className="mt-16 bg-white rounded-2xl p-8 max-w-4xl mx-auto">
-          <h2 className="text-3xl font-bold text-gray-900 text-center mb-8">
-            How It Works
-          </h2>
-          <div className="grid md:grid-cols-3 gap-8">
-            <div className="text-center">
-              <div className="bg-orange-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl">📸</span>
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">1. Upload Photo</h3>
-              <p className="text-gray-600">Upload any photo of yourself or others</p>
-            </div>
-            <div className="text-center">
-              <div className="bg-orange-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl">🍕</span>
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">2. Choose Food</h3>
-              <p className="text-gray-600">Select from 12+ delicious food items</p>
-            </div>
-            <div className="text-center">
-              <div className="bg-orange-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <span className="text-2xl">✨</span>
-              </div>
-              <h3 className="text-xl font-semibold text-gray-900 mb-2">3. AI Magic</h3>
-              <p className="text-gray-600">AI adds the food to your hand realistically</p>
-            </div>
-          </div>
-        </div>
+       
       </div>
     </div>
   );

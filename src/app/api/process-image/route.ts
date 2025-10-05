@@ -3,7 +3,7 @@ import { generateImagePrompt, generateNegativePrompt } from '@/lib/utils';
 
 export async function POST(request: NextRequest) {
   try {
-    const { imageUrl, dish } = await request.json();
+    const { imageUrl, dish, style } = await request.json();
 
     if (!imageUrl || !dish) {
       return NextResponse.json(
@@ -12,12 +12,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Process the image with AI
-    const processedImageUrl = await processImageWithAI(imageUrl, dish);
+    // Process the image with AI. Pass the incoming request so we can build absolute URLs for temp images
+    const result = await processImageWithAI(imageUrl, dish, request, style);
 
     return NextResponse.json({
       success: true,
-      processedImageUrl,
+      processedImageUrl: result.processedImageUrl,
+      diagnostics: result.diagnostics || null,
     });
   } catch (error) {
     console.error('Error processing image:', error);
@@ -28,37 +29,193 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processImageWithAI(imageUrl: string, dish: string): Promise<string> {
+async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest, style?: string): Promise<{ processedImageUrl: string, diagnostics: any }> {
   // Check if we have API keys available
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   const falKey = process.env.FAL_KEY;
+  const removeBgKey = process.env.REMOVE_BG_API_KEY;
+  const diagnostics: any = { removeBg: null, fal: null, replicate: null };
+
+
+  // Detect image size for Fal.ai
+  let imageSizeOption = await detectFalImageSize(imageUrl, request);
+  diagnostics.imageSize = imageSizeOption;
 
   // Prioritize Fal.ai since it's faster and more reliable
   if (falKey) {
     try {
       console.log('Using Fal.ai API for image processing');
-      return await processWithFal(imageUrl, dish, falKey);
+      const url = await processWithFal(imageUrl, dish, falKey, imageSizeOption);
+      diagnostics.fal = { used: true };
+      let finalUrl = url;
+      // If remove.bg key is provided, remove background from Fal.ai output
+      if (removeBgKey) {
+        try {
+          console.log('Removing background from processed image using remove.bg');
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) {
+            finalUrl = bgResult.url;
+            console.log('Background removed from processed image:', finalUrl);
+          }
+        } catch (err) {
+          console.error('remove.bg failed on processed image:', err);
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+
+      // Optional stylize step (e.g., 1970s retro poster)
+      if (style && falKey) {
+        try {
+          console.log('Applying stylize step (composite original person over stylized background) with style:', style);
+
+          // Ensure we have the Fal.ai processed image (before background removal) to extract the person with product
+          const falProcessedImage = url; // original Fal.ai output (full image)
+
+          // 1) Get transparent person (with product) from processed Fal.ai image
+          let personResult = await removeBackground(falProcessedImage, removeBgKey, request);
+          let personUrl = personResult && personResult.url ? personResult.url : null;
+
+          // If removeBackground failed on processed image, try on finalUrl
+          if (!personUrl) {
+            const tryPerson = await removeBackground(finalUrl, removeBgKey, request);
+            personUrl = tryPerson && tryPerson.url ? tryPerson.url : null;
+            diagnostics.removeBgPersonFallback = tryPerson || null;
+          }
+
+          if (!personUrl) {
+            console.warn('Could not obtain transparent person; skipping composite stylize and using stylized full image');
+            const styledFull = await stylizeImage(finalUrl, style, falKey, imageSizeOption);
+            diagnostics.stylize = { url: styledFull };
+            if (styledFull) finalUrl = styledFull;
+          } else {
+            // 2) Generate a stylized background (text-to-image) using Fal.ai with prompt only
+            const bgPrompt = `1970s retro poster background, warm color palette, halftone textures, bold shapes, vintage typography elements, clean central area for subject placement`;
+            const styledBg = await stylizeImage(null, style + ' background', falKey, imageSizeOption);
+            diagnostics.stylize = { background: styledBg };
+
+            // Upload both to Cloudinary and composite: overlay person over background
+            const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+            const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
+            const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
+
+            async function uploadToCloudinary(imgUrl: string) {
+              if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) return null;
+              try {
+                const timestamp = Math.floor(Date.now() / 1000);
+                const crypto = await import('crypto');
+                const toSign = `timestamp=${timestamp}${CLOUD_SECRET}`;
+                const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+                const cloudForm = new FormData();
+                cloudForm.append('file', imgUrl);
+                cloudForm.append('api_key', CLOUD_KEY);
+                cloudForm.append('timestamp', String(timestamp));
+                cloudForm.append('signature', signature);
+
+                const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+                  method: 'POST',
+                  body: cloudForm as any,
+                });
+
+                if (!cloudResp.ok) {
+                  const txt = await cloudResp.text();
+                  console.error('Cloudinary upload failed:', cloudResp.status, txt);
+                  return null;
+                }
+
+                const cloudData = await cloudResp.json();
+                return { secure_url: cloudData.secure_url, public_id: cloudData.public_id };
+              } catch (e) {
+                console.error('uploadToCloudinary error:', e);
+                return null;
+              }
+            }
+
+            const uploadedBg = styledBg ? await uploadToCloudinary(styledBg) : null;
+            const uploadedPerson = await uploadToCloudinary(personUrl);
+
+            if (uploadedBg && uploadedPerson) {
+              const bgId = uploadedBg.public_id;
+              const personId = uploadedPerson.public_id;
+              const CLOUD_NAME_ENV = process.env.CLOUDINARY_CLOUD_NAME;
+              // Composite person over background (person should be exact original PNG with transparency)
+              const compositeUrl = `https://res.cloudinary.com/${CLOUD_NAME_ENV}/image/upload/l_${encodeURIComponent(personId)},fl_layer_apply/${bgId}.png`;
+              finalUrl = compositeUrl;
+              diagnostics.composite = { background: uploadedBg, person: uploadedPerson, compositeUrl };
+            } else {
+              // fallback: if upload failed, just use styledBg or personUrl
+              finalUrl = uploadedBg ? uploadedBg.secure_url : (personUrl || finalUrl);
+            }
+          }
+        } catch (err) {
+          console.error('Stylize composite step failed:', err);
+          diagnostics.stylize = { error: String(err) };
+        }
+      }
+
+      return { processedImageUrl: finalUrl, diagnostics };
     } catch (error) {
       console.error('Fal.ai failed, falling back to demo mode:', error);
+      diagnostics.fal = { error: String(error) };
       // Fallback to demo mode if API fails
       await new Promise(resolve => setTimeout(resolve, 2000));
-      return imageUrl;
+      let finalUrl = imageUrl;
+      if (removeBgKey) {
+        try {
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) finalUrl = bgResult.url;
+        } catch (err) {
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+      return { processedImageUrl: finalUrl, diagnostics };
     }
   } else if (replicateToken) {
     try {
       console.log('Using Replicate API for image processing');
-      return await processWithReplicate(imageUrl, dish, replicateToken);
+      const url = await processWithReplicate(imageUrl, dish, replicateToken);
+      diagnostics.replicate = { used: true };
+      let finalUrl = url;
+      if (removeBgKey) {
+        try {
+          console.log('Removing background from processed image (replicate) using remove.bg');
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) {
+            finalUrl = bgResult.url;
+            console.log('Background removed from processed (replicate) image:', finalUrl);
+          }
+        } catch (err) {
+          console.error('remove.bg failed on processed (replicate) image:', err);
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+      return { processedImageUrl: finalUrl, diagnostics };
     } catch (error) {
       console.error('Replicate failed, falling back to demo mode:', error);
+      diagnostics.replicate = { error: String(error) };
       // Fallback to demo mode if API fails
       await new Promise(resolve => setTimeout(resolve, 2000));
-      return imageUrl;
+      let finalUrl = imageUrl;
+      if (removeBgKey) {
+        try {
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) finalUrl = bgResult.url;
+        } catch (err) {
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+      return { processedImageUrl: finalUrl, diagnostics };
     }
   } else {
     // Fallback: simulate processing for demo
     console.log('No API keys found, using demo mode');
     await new Promise(resolve => setTimeout(resolve, 2000));
-    return imageUrl;
+    diagnostics.none = true;
+    return { processedImageUrl: imageUrl, diagnostics };
   }
 }
 
@@ -113,28 +270,65 @@ async function processWithReplicate(imageUrl: string, dish: string, apiToken: st
   }
 }
 
-async function processWithFal(imageUrl: string, dish: string, apiKey: string): Promise<string> {
+async function processWithFal(imageUrl: string, dish: string, apiKey: string, imageSize?: string): Promise<string> {
   try {
-    console.log('Processing with Fal.ai Product Holding model:', { dish, imageUrl: imageUrl.substring(0, 50) + '...' });
-    
-    // Use the specialized product-holding model with additional settings to preserve face
+    console.log('Processing with Fal.ai Product Holding model (enhanced preservation):', { dish, imageUrl: imageUrl.substring(0, 80) + '...' });
+
+    // Use the specialized product-holding model with stronger preservation and inpainting hints
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 90000); // 90 second timeout for this model
-    
+
+    const requestBody = {
+      person_image_url: imageUrl,
+      product_image_url: await getProductImageUrl(dish),
+      // Preservation flags — instruct the model to avoid altering face/hands and keep aspect
+      preserve_face: true,
+      preserve_hands: true,
+      preserve_aspect_ratio: true,
+      preserve_resolution: true,
+      // Preserve transparency and indicate source has no background
+      preserve_alpha: true,
+      background: 'transparent',
+      output_transparency: true,
+      // Stronger instructions to avoid cropping the head/face: expand canvas or pad when needed
+      expand_canvas: true,
+      canvas_padding: 0.18,
+      face_padding: 0.22,
+      keep_head_in_frame: true,
+      crop_style: "full_body",
+      hand_position: "natural",
+      // Important: try to avoid creating extra persons or duplication
+      single_person_only: true,
+      no_duplication: true,
+      // Use inpainting/mask-based blending to minimize distortion of person
+      inpaint: true,
+      inpaint_mode: "auto_mask",
+      blend_mode: "seamless",
+      guidance_scale: 8.5,
+      num_inference_steps: 32,
+      image_strength: 0.6,
+      // Force product placement and provide detailed placement hints
+      force_product: true,
+      force_product_placement: true,
+      placement_hint: "place the product naturally in the subject's visible hand; ensure visible contact and natural grip",
+      positive_prompt: `Ensure the ${dish} is present and clearly held by the person in a natural way.`,
+      // Requirements to force product visibility
+      required_objects: ['product'],
+      min_product_visibility: 0.6,
+      product_prominence: 'high',
+      product_scale: 'natural',
+      placement_target: ['right_hand','left_hand'],
+      // Clear instruction for the model
+      instructions: `Place the ${dish} into the original person's hand. Do NOT add another person or duplicate the subject. Preserve the person's face and hands and their proportions. Keep background transparent. Make sure the product is clearly visible and in contact with the subject's hand.`,
+    } as any;
+
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
       method: 'POST',
       headers: {
         'Authorization': `Key ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        person_image_url: imageUrl,
-        product_image_url: await getProductImageUrl(dish),
-        // Additional parameters to preserve the full image including face
-        preserve_face: true,
-        crop_style: "full_body", // Try to preserve full body/face
-        hand_position: "natural", // Natural hand position
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
@@ -143,56 +337,90 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string): P
     if (!response.ok) {
       const errorText = await response.text();
       console.error('Fal.ai Product Holding API error response:', errorText);
-      
+
       // If the specialized model fails, fallback to a different approach
       console.log('Product holding model failed, trying alternative approach...');
-      return await processWithAlternativeApproach(imageUrl, dish, apiKey);
+      return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
     }
 
     const data = await response.json();
-    console.log('Fal.ai Product Holding response:', data);
-    
+    console.log('Fal.ai Product Holding response:', Array.isArray(data.images) ? `images:${data.images.length}` : JSON.stringify(data).slice(0, 200));
+
     if (data.images && data.images.length > 0) {
       console.log('Successfully generated product holding image:', data.images[0].url);
       return data.images[0].url;
     } else {
-      console.error('No images in response:', data);
-      throw new Error('No images returned from Fal.ai API');
+      console.error('No images in response or unexpected format:', data);
+      // Try alternative approach before failing
+      return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
     }
-  } catch (error) {
-    if (error.name === 'AbortError') {
+  } catch (error: any) {
+    if (error && error.name === 'AbortError') {
       console.error('Fal.ai API timeout');
       throw new Error('Request timed out. Please try again.');
     }
-    console.error('Fal.ai API error:', error);
+    console.error('Fal.ai API error (enhanced):', error);
     // Fallback to alternative approach
-    return await processWithAlternativeApproach(imageUrl, dish, apiKey);
+    return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
   }
 }
 
-// Alternative approach using inpainting to preserve the full image
-async function processWithAlternativeApproach(imageUrl: string, dish: string, apiKey: string): Promise<string> {
+// Alternative approach using inpainting and explicit preservation hints
+async function processWithAlternativeApproach(imageUrl: string, dish: string, apiKey: string, imageSize?: string): Promise<string> {
   try {
-    console.log('Using alternative approach to preserve face...');
-    
-    // Use a different model that can do inpainting while preserving the full image
+    console.log('Using alternative approach (inpainting-focused) to preserve face and hands...');
+
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-    
+    const timeoutId = setTimeout(() => controller.abort(), 70000);
+
+    const requestBody = {
+      // Provide a clear prompt to the model to minimize distortion
+      prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. If necessary, expand the canvas and pad the image so the full head remains visible. Keep background transparent. IMPORTANT: Do NOT add another person or duplicate the subject; only modify the existing person to hold the product. Remove any extra arms or duplicated limbs.`,
+      source_image_url: imageUrl,
+      product_image_url: await getProductImageUrl(dish),
+      // Ask the API to preserve size/aspect where possible
+      preserve_face: true,
+      preserve_hands: true,
+      preserve_aspect_ratio: true,
+      preserve_resolution: true,
+      // Preserve transparency
+      preserve_alpha: true,
+      background: 'transparent',
+      output_transparency: true,
+      expand_canvas: true,
+      canvas_padding: 0.18,
+      face_padding: 0.22,
+      inpaint: true,
+      inpaint_mode: 'mask_based',
+      blend_mode: 'seamless',
+      image_size: imageSize || 'landscape_4_3',
+      resize_mode: 'pad',
+      num_inference_steps: 38,
+      guidance_scale: 9.5,
+      enable_safety_checker: true,
+      seed: Math.floor(Math.random() * 1000000),
+      // Enforce product presence and placement
+      force_product: true,
+      force_product_placement: true,
+      placement_hint: "place the product clearly into the subject's visible hand with natural contact",
+      positive_prompt: `Ensure the ${dish} is visible, clearly held by the subject, and not removed by denoising.`,
+      // Requirements to force product on output
+      required_objects: ['product'],
+      min_product_visibility: 0.6,
+      product_prominence: 'high',
+      product_scale: 'natural',
+      placement_target: ['right_hand','left_hand'],
+      // Keep negative prompts but avoid removing the product
+      negative_prompt: "duplicate person, mirrored duplicate, multiple people, cloned subject, ghosting, artifact",
+    } as any;
+
     const response = await fetch('https://fal.run/fal-ai/flux/dev', {
       method: 'POST',
       headers: {
         'Authorization': `Key ${apiKey}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        prompt: `A person holding ${dish} in their hand, full body visible including face, realistic, high quality, professional photography, natural lighting, detailed, photorealistic, full frame composition`,
-        image_size: "landscape_4_3", // Use landscape format to preserve more of the image
-        num_inference_steps: 20,
-        guidance_scale: 7.5,
-        enable_safety_checker: true,
-        seed: Math.floor(Math.random() * 1000000),
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
@@ -205,18 +433,145 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
     }
 
     const data = await response.json();
-    console.log('Alternative approach response:', data);
-    
+    console.log('Alternative approach response:', Array.isArray(data.images) ? `images:${data.images.length}` : JSON.stringify(data).slice(0,200));
+
     if (data.images && data.images.length > 0) {
       console.log('Successfully generated alternative image:', data.images[0].url);
       return data.images[0].url;
     } else {
+      console.error('No images returned from alternative approach:', data);
       throw new Error('No images returned from alternative approach');
     }
-  } catch (error) {
-    console.error('Alternative approach error:', error);
+  } catch (error: any) {
+    console.error('Alternative approach error (inpainting-focused):', error);
     throw error;
   }
+}
+
+// Stylize an image (image-to-image) using Fal.ai
+async function stylizeImage(imageUrl: string, style: string, apiKey: string, imageSize?: string): Promise<string | null> {
+  try {
+    console.log('Stylizing image with style:', style, imageUrl.substring(0,80));
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+    const requestBody: any = {
+      prompt: `Convert the input photo into a ${style} style poster. Use limited warm color palette, halftone textures, bold shapes and typography reminiscent of 1970s poster design. Keep the subject recognizable and emphasize the product in hand. Preserve transparency where possible.`,
+      source_image_url: imageUrl,
+      preserve_alpha: true,
+      background: 'transparent',
+      output_transparency: true,
+      image_size: imageSize || 'landscape_4_3',
+      resize_mode: 'pad',
+      num_inference_steps: 30,
+      guidance_scale: 7.5,
+      style: style,
+    };
+
+    const resp = await fetch('https://fal.run/fal-ai/flux/dev', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error('stylizeImage failed:', resp.status, txt);
+      return null;
+    }
+
+    const data = await resp.json();
+    if (data.images && data.images.length > 0) return data.images[0].url;
+    return null;
+  } catch (err) {
+    console.error('stylizeImage error:', err);
+    return null;
+  }
+}
+
+// --- Image helpers: fetch buffer, detect dimensions, map to Fal.ai image_size
+async function fetchImageBuffer(imageUrl: string, request?: NextRequest): Promise<Buffer | null> {
+  try {
+    const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
+    if (dataUrlMatch) {
+      const base64 = dataUrlMatch[2];
+      return Buffer.from(base64, 'base64');
+    }
+
+    const resp = await fetch(imageUrl);
+    if (!resp.ok) return null;
+    const ab = await resp.arrayBuffer();
+    return Buffer.from(ab);
+  } catch (err) {
+    console.error('fetchImageBuffer error:', err);
+    return null;
+  }
+}
+
+function getImageDimensionsFromBuffer(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 12) return null;
+  // PNG
+  if (buf.readUInt32BE(0) === 0x89504e47) {
+    try {
+      const width = buf.readUInt32BE(16);
+      const height = buf.readUInt32BE(20);
+      return { width, height };
+    } catch (e) { return null; }
+  }
+  // GIF
+  if (buf.toString('ascii', 0, 3) === 'GIF') {
+    const width = buf.readUInt16LE(6);
+    const height = buf.readUInt16LE(8);
+    return { width, height };
+  }
+  // JPEG - parse markers
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let offset = 2;
+    while (offset < buf.length) {
+      if (buf[offset] !== 0xff) break;
+      const marker = buf[offset + 1];
+      const length = buf.readUInt16BE(offset + 2);
+      // SOF0, SOF2 markers
+      if (marker >= 0xc0 && marker <= 0xc3) {
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        return { width, height };
+      }
+      offset += 2 + length;
+    }
+  }
+  // WebP - try VP8X
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    const chunk = buf.toString('ascii', 12, 16);
+    if (chunk === 'VP8X' && buf.length >= 30) {
+      const w = buf.readUIntLE(24, 3) + 1;
+      const h = buf.readUIntLE(27, 3) + 1;
+      return { width: w, height: h };
+    }
+  }
+  return null;
+}
+
+function mapDimsToFalImageSize(width: number | null, height: number | null): string {
+  if (!width || !height) return 'landscape_4_3';
+  const ratio = width / height;
+  if (ratio > 0.9 && ratio < 1.1) return 'square';
+  if (ratio < 1) return 'portrait_4_3';
+  return 'landscape_4_3';
+}
+
+async function detectFalImageSize(imageUrl: string, request?: NextRequest): Promise<string> {
+  const buf = await fetchImageBuffer(imageUrl, request);
+  if (!buf) return 'landscape_4_3';
+  const dims = getImageDimensionsFromBuffer(buf);
+  if (!dims) return 'landscape_4_3';
+  return mapDimsToFalImageSize(dims.width, dims.height);
 }
 
 // Helper function to get a product image URL for the dish
@@ -224,7 +579,7 @@ async function getProductImageUrl(dish: string): Promise<string> {
   // For now, we'll use a placeholder approach
   // In a real implementation, you might have a database of product images
   // or use another AI service to generate product images
-  
+
   const productImages: { [key: string]: string } = {
     'a delicious pizza slice': 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=512&h=512&fit=crop',
     'a mouth-watering burger': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=512&h=512&fit=crop',
@@ -239,6 +594,114 @@ async function getProductImageUrl(dish: string): Promise<string> {
     'a sweet donut': 'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=512&h=512&fit=crop',
     'a steaming bowl of ramen': 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=512&h=512&fit=crop',
   };
-  
+
   return productImages[dish] || 'https://images.unsplash.com/photo-1546554137-f86b9593a222?w=512&h=512&fit=crop'; // Default food image
+}
+
+// Remove background using remove.bg API and return a data URL (base64) on success
+async function removeBackground(imageUrl: string, apiKey: string, request?: NextRequest): Promise<{ url: string | null; status: number | null; errorText?: string; size?: number }> {
+  try {
+    const form = new FormData();
+
+    // If imageUrl is a data URL (base64), upload as a file. Otherwise, provide remote URL.
+    const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
+    if (dataUrlMatch) {
+      const contentType = dataUrlMatch[1];
+      const base64 = dataUrlMatch[2];
+      const buf = Buffer.from(base64, 'base64');
+      // Create a Blob from the buffer for FormData (works in Next.js runtime)
+      const blob = new Blob([buf], { type: contentType });
+      form.append('image_file', blob, 'upload.jpg');
+    } else {
+      form.append('image_url', imageUrl);
+    }
+
+    form.append('size', 'auto');
+
+    const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+      method: 'POST',
+      headers: {
+        'X-Api-Key': apiKey,
+      },
+      body: form as any,
+    });
+
+    const status = response.status;
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('remove.bg API error:', status, text);
+      return { url: null, status, errorText: text };
+    }
+
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const size = arrayBuffer.byteLength;
+
+    // If Cloudinary credentials are available, upload the bg-removed image there and return the secure URL
+    const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+    const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
+    const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
+
+    if (CLOUD_NAME && CLOUD_KEY && CLOUD_SECRET) {
+      try {
+        const timestamp = Math.floor(Date.now() / 1000);
+        const crypto = await import('crypto');
+        const toSign = `timestamp=${timestamp}${CLOUD_SECRET}`;
+        const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+        const cloudForm = new FormData();
+        cloudForm.append('file', `data:${contentType};base64,${base64}`);
+        cloudForm.append('api_key', CLOUD_KEY);
+        cloudForm.append('timestamp', String(timestamp));
+        cloudForm.append('signature', signature);
+
+        const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+          method: 'POST',
+          body: cloudForm as any,
+        });
+
+        if (cloudResp.ok) {
+          const cloudData = await cloudResp.json();
+          if (cloudData && cloudData.secure_url) {
+            return { url: cloudData.secure_url, status: cloudResp.status, size };
+          }
+        } else {
+          const txt = await cloudResp.text();
+          console.error('Cloudinary upload failed:', cloudResp.status, txt);
+        }
+      } catch (err) {
+        console.error('Cloudinary upload error:', err);
+      }
+    }
+
+    // To let Fal.ai fetch the bg-removed image, store it temporarily via our own API
+    if (!request) {
+      // If we don't have the request to build an origin, fallback to data URL
+      const dataUrl = `data:${contentType};base64,${base64}`;
+      return { url: dataUrl, status, size };
+    }
+
+    const origin = new URL(request.url).origin;
+    // POST to our internal temp-image API to create a public endpoint for this binary
+    const tempResp = await fetch(`${origin}/api/temp-image`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageBase64: base64, contentType }),
+    });
+
+    if (!tempResp.ok) {
+      const txt = await tempResp.text();
+      console.error('Failed to store temp image:', txt);
+      // Fallback to data URL
+      return { url: `data:${contentType};base64,${base64}`, status, size, errorText: txt };
+    }
+
+    const tempData = await tempResp.json();
+    return { url: tempData.url || null, status, size };
+  } catch (error: any) {
+    console.error('removeBackground error:', error);
+    return { url: null, status: null, errorText: String(error) };
+  }
 }

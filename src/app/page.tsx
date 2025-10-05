@@ -79,16 +79,8 @@ export default function Home() {
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="text-center mb-12">
-          <div className="flex justify-center mb-4">
-            <a
-              href="/demo"
-              className="text-orange-600 hover:text-orange-700 text-sm font-medium transition-colors"
-            >
-              View Demo Gallery →
-            </a>
-          </div>
           <h1 className="text-5xl font-bold text-gray-900 mb-4">
-            🍕 Food in Hand
+            Fortune
           </h1>
           <p className="text-xl text-gray-600 max-w-2xl mx-auto">
             Upload your photo and see yourself holding delicious food items!
