@@ -32,6 +32,21 @@ async function processImageWithAI(imageUrl: string, dish: string): Promise<strin
   // Check if we have API keys available
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   const falKey = process.env.FAL_KEY;
+  const removeBgKey = process.env.REMOVE_BG_API_KEY;
+
+  // If remove.bg key is provided, attempt to remove background first
+  if (removeBgKey) {
+    try {
+      console.log('Removing background using remove.bg');
+      const bgRemoved = await removeBackground(imageUrl, removeBgKey);
+      if (bgRemoved) {
+        console.log('Background removed successfully, using bg-removed image for processing');
+        imageUrl = bgRemoved;
+      }
+    } catch (err) {
+      console.error('remove.bg failed, proceeding with original image:', err);
+    }
+  }
 
   // Prioritize Fal.ai since it's faster and more reliable
   if (falKey) {
@@ -259,7 +274,7 @@ async function getProductImageUrl(dish: string): Promise<string> {
   // For now, we'll use a placeholder approach
   // In a real implementation, you might have a database of product images
   // or use another AI service to generate product images
-  
+
   const productImages: { [key: string]: string } = {
     'a delicious pizza slice': 'https://images.unsplash.com/photo-1513104890138-7c749659a591?w=512&h=512&fit=crop',
     'a mouth-watering burger': 'https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=512&h=512&fit=crop',
@@ -274,6 +289,38 @@ async function getProductImageUrl(dish: string): Promise<string> {
     'a sweet donut': 'https://images.unsplash.com/photo-1551024506-0bccd828d307?w=512&h=512&fit=crop',
     'a steaming bowl of ramen': 'https://images.unsplash.com/photo-1569718212165-3a8278d5f624?w=512&h=512&fit=crop',
   };
-  
+
   return productImages[dish] || 'https://images.unsplash.com/photo-1546554137-f86b9593a222?w=512&h=512&fit=crop'; // Default food image
+}
+
+// Remove background using remove.bg API and return a data URL (base64) on success
+async function removeBackground(imageUrl: string, apiKey: string): Promise<string | null> {
+  try {
+    const form = new FormData();
+    form.append('image_url', imageUrl);
+    form.append('size', 'auto');
+
+    const response = await fetch('https://api.remove.bg/v1.0/removebg', {
+      method: 'POST',
+      headers: {
+        'X-Api-Key': apiKey,
+      },
+      body: form as any,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('remove.bg API error:', response.status, text);
+      return null;
+    }
+
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const arrayBuffer = await response.arrayBuffer();
+    const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const dataUrl = `data:${contentType};base64,${base64}`;
+    return dataUrl;
+  } catch (error) {
+    console.error('removeBackground error:', error);
+    return null;
+  }
 }
