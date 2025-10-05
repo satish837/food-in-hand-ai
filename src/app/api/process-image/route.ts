@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest): Promise<{ processedImageUrl: string, diagnostics: any }> {
+async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest, style?: string): Promise<{ processedImageUrl: string, diagnostics: any }> {
   // Check if we have API keys available
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   const falKey = process.env.FAL_KEY;
