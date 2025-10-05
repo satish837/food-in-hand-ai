@@ -3,7 +3,7 @@ import { generateImagePrompt, generateNegativePrompt } from '@/lib/utils';
 
 export async function POST(request: NextRequest) {
   try {
-    const { imageUrl, dish } = await request.json();
+    const { imageUrl, dish, style } = await request.json();
 
     if (!imageUrl || !dish) {
       return NextResponse.json(
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Process the image with AI. Pass the incoming request so we can build absolute URLs for temp images
-    const result = await processImageWithAI(imageUrl, dish, request);
+    const result = await processImageWithAI(imageUrl, dish, request, style);
 
     return NextResponse.json({
       success: true,
