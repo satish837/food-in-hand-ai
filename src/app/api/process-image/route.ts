@@ -237,7 +237,7 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
 
     const requestBody = {
       // Provide a clear prompt to the model to minimize distortion
-      prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. If necessary, expand the canvas and pad the image so the full head remains visible. Keep background and skin tones consistent. Use mask-based inpainting to insert the product naturally.`,
+      prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input, do not alter aspect ratio or facial proportions. If necessary, expand the canvas and pad the image so the full head remains visible. Keep background transparent. IMPORTANT: Do NOT add another person or duplicate the subject; only modify the existing person to hold the product.`,
       source_image_url: imageUrl,
       product_image_url: await getProductImageUrl(dish),
       // Ask the API to preserve size/aspect where possible
@@ -245,6 +245,10 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       preserve_hands: true,
       preserve_aspect_ratio: true,
       preserve_resolution: true,
+      // Preserve transparency
+      preserve_alpha: true,
+      background: 'transparent',
+      output_transparency: true,
       expand_canvas: true,
       canvas_padding: 0.18,
       face_padding: 0.22,
