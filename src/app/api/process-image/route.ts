@@ -219,7 +219,7 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
 }
 
 // Alternative approach using inpainting and explicit preservation hints
-async function processWithAlternativeApproach(imageUrl: string, dish: string, apiKey: string): Promise<string> {
+async function processWithAlternativeApproach(imageUrl: string, dish: string, apiKey: string, imageSize?: string): Promise<string> {
   try {
     console.log('Using alternative approach (inpainting-focused) to preserve face and hands...');
 
