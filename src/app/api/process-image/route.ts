@@ -47,7 +47,23 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
       console.log('Using Fal.ai API for image processing');
       const url = await processWithFal(imageUrl, dish, falKey, imageSizeOption);
       diagnostics.fal = { used: true };
-      return { processedImageUrl: url, diagnostics };
+      let finalUrl = url;
+      // If remove.bg key is provided, remove background from Fal.ai output
+      if (removeBgKey) {
+        try {
+          console.log('Removing background from processed image using remove.bg');
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) {
+            finalUrl = bgResult.url;
+            console.log('Background removed from processed image:', finalUrl);
+          }
+        } catch (err) {
+          console.error('remove.bg failed on processed image:', err);
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+      return { processedImageUrl: finalUrl, diagnostics };
     } catch (error) {
       console.error('Fal.ai failed, falling back to demo mode:', error);
       diagnostics.fal = { error: String(error) };
