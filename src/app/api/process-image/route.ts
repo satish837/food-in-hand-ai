@@ -284,6 +284,85 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
   }
 }
 
+// --- Image helpers: fetch buffer, detect dimensions, map to Fal.ai image_size
+async function fetchImageBuffer(imageUrl: string, request?: NextRequest): Promise<Buffer | null> {
+  try {
+    const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
+    if (dataUrlMatch) {
+      const base64 = dataUrlMatch[2];
+      return Buffer.from(base64, 'base64');
+    }
+
+    const resp = await fetch(imageUrl);
+    if (!resp.ok) return null;
+    const ab = await resp.arrayBuffer();
+    return Buffer.from(ab);
+  } catch (err) {
+    console.error('fetchImageBuffer error:', err);
+    return null;
+  }
+}
+
+function getImageDimensionsFromBuffer(buf: Buffer): { width: number; height: number } | null {
+  if (buf.length < 12) return null;
+  // PNG
+  if (buf.readUInt32BE(0) === 0x89504e47) {
+    try {
+      const width = buf.readUInt32BE(16);
+      const height = buf.readUInt32BE(20);
+      return { width, height };
+    } catch (e) { return null; }
+  }
+  // GIF
+  if (buf.toString('ascii', 0, 3) === 'GIF') {
+    const width = buf.readUInt16LE(6);
+    const height = buf.readUInt16LE(8);
+    return { width, height };
+  }
+  // JPEG - parse markers
+  if (buf[0] === 0xff && buf[1] === 0xd8) {
+    let offset = 2;
+    while (offset < buf.length) {
+      if (buf[offset] !== 0xff) break;
+      const marker = buf[offset + 1];
+      const length = buf.readUInt16BE(offset + 2);
+      // SOF0, SOF2 markers
+      if (marker >= 0xc0 && marker <= 0xc3) {
+        const height = buf.readUInt16BE(offset + 5);
+        const width = buf.readUInt16BE(offset + 7);
+        return { width, height };
+      }
+      offset += 2 + length;
+    }
+  }
+  // WebP - try VP8X
+  if (buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP') {
+    const chunk = buf.toString('ascii', 12, 16);
+    if (chunk === 'VP8X' && buf.length >= 30) {
+      const w = buf.readUIntLE(24, 3) + 1;
+      const h = buf.readUIntLE(27, 3) + 1;
+      return { width: w, height: h };
+    }
+  }
+  return null;
+}
+
+function mapDimsToFalImageSize(width: number | null, height: number | null): string {
+  if (!width || !height) return 'landscape_4_3';
+  const ratio = width / height;
+  if (ratio > 0.9 && ratio < 1.1) return 'square';
+  if (ratio < 1) return 'portrait_4_3';
+  return 'landscape_4_3';
+}
+
+async function detectFalImageSize(imageUrl: string, request?: NextRequest): Promise<string> {
+  const buf = await fetchImageBuffer(imageUrl, request);
+  if (!buf) return 'landscape_4_3';
+  const dims = getImageDimensionsFromBuffer(buf);
+  if (!dims) return 'landscape_4_3';
+  return mapDimsToFalImageSize(dims.width, dims.height);
+}
+
 // Helper function to get a product image URL for the dish
 async function getProductImageUrl(dish: string): Promise<string> {
   // For now, we'll use a placeholder approach
