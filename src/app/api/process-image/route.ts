@@ -214,7 +214,7 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
     }
     console.error('Fal.ai API error (enhanced):', error);
     // Fallback to alternative approach
-    return await processWithAlternativeApproach(imageUrl, dish, apiKey);
+    return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
   }
 }
 
