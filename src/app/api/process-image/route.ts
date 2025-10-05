@@ -214,10 +214,12 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       inpaint_mode: "auto_mask",
       blend_mode: "seamless",
       guidance_scale: 7.5,
-      num_inference_steps: 22,
-      image_strength: 0.72,
+      num_inference_steps: 30,
+      image_strength: 0.68,
       // Add explicit textual instructions for the model
-      instructions: `Place the ${dish} into the original person's hand. Do NOT add another person, do NOT duplicate or mirror the subject. Preserve the original person's face, hands, and proportions. Keep background transparent.`,
+      instructions: `Place the ${dish} into the original person's hand. Do NOT add another person, do NOT duplicate or mirror the subject. Preserve the original person's face, hands, and proportions. Keep background transparent. Remove any extra arms, hands, or mirrored duplicates.`,
+      // Negative prompts to avoid duplication/artifacts
+      negative_prompt: "duplicate person, extra person, mirrored duplicate, extra arms, extra hands, severed limbs, multiple people, cloned subject, ghosting",
     } as any;
 
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
