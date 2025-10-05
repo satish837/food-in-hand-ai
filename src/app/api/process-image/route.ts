@@ -313,6 +313,12 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       force_product_placement: true,
       placement_hint: "place the product clearly into the subject's visible hand with natural contact",
       positive_prompt: `Ensure the ${dish} is visible, clearly held by the subject, and not removed by denoising.`,
+      // Requirements to force product on output
+      required_objects: ['product'],
+      min_product_visibility: 0.6,
+      product_prominence: 'high',
+      product_scale: 'natural',
+      placement_target: ['right_hand','left_hand'],
       // Keep negative prompts but avoid removing the product
       negative_prompt: "duplicate person, mirrored duplicate, multiple people, cloned subject, ghosting, artifact",
     } as any;
