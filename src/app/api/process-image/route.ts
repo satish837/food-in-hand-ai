@@ -13,11 +13,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Process the image with AI. Pass the incoming request so we can build absolute URLs for temp images
-    const processedImageUrl = await processImageWithAI(imageUrl, dish, request);
+    const result = await processImageWithAI(imageUrl, dish, request);
 
     return NextResponse.json({
       success: true,
-      processedImageUrl,
+      processedImageUrl: result.processedImageUrl,
+      diagnostics: result.diagnostics || null,
     });
   } catch (error) {
     console.error('Error processing image:', error);
@@ -28,23 +29,26 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest): Promise<string> {
+async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest): Promise<{ processedImageUrl: string, diagnostics: any }> {
   // Check if we have API keys available
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   const falKey = process.env.FAL_KEY;
   const removeBgKey = process.env.REMOVE_BG_API_KEY;
+  const diagnostics: any = { removeBg: null, fal: null, replicate: null };
 
   // If remove.bg key is provided, attempt to remove background first
   if (removeBgKey) {
     try {
       console.log('Removing background using remove.bg');
-      const bgRemoved = await removeBackground(imageUrl, removeBgKey, request);
-      if (bgRemoved) {
-        console.log('Background removed successfully, using bg-removed image for processing:', bgRemoved);
-        imageUrl = bgRemoved;
+      const bgResult = await removeBackground(imageUrl, removeBgKey, request);
+      diagnostics.removeBg = bgResult;
+      if (bgResult && bgResult.url) {
+        console.log('Background removed successfully, using bg-removed image for processing:', bgResult.url);
+        imageUrl = bgResult.url;
       }
     } catch (err) {
       console.error('remove.bg failed, proceeding with original image:', err);
+      diagnostics.removeBg = { error: String(err) };
     }
   }
 
@@ -52,28 +56,35 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
   if (falKey) {
     try {
       console.log('Using Fal.ai API for image processing');
-      return await processWithFal(imageUrl, dish, falKey);
+      const url = await processWithFal(imageUrl, dish, falKey);
+      diagnostics.fal = { used: true };
+      return { processedImageUrl: url, diagnostics };
     } catch (error) {
       console.error('Fal.ai failed, falling back to demo mode:', error);
+      diagnostics.fal = { error: String(error) };
       // Fallback to demo mode if API fails
       await new Promise(resolve => setTimeout(resolve, 2000));
-      return imageUrl;
+      return { processedImageUrl: imageUrl, diagnostics };
     }
   } else if (replicateToken) {
     try {
       console.log('Using Replicate API for image processing');
-      return await processWithReplicate(imageUrl, dish, replicateToken);
+      const url = await processWithReplicate(imageUrl, dish, replicateToken);
+      diagnostics.replicate = { used: true };
+      return { processedImageUrl: url, diagnostics };
     } catch (error) {
       console.error('Replicate failed, falling back to demo mode:', error);
+      diagnostics.replicate = { error: String(error) };
       // Fallback to demo mode if API fails
       await new Promise(resolve => setTimeout(resolve, 2000));
-      return imageUrl;
+      return { processedImageUrl: imageUrl, diagnostics };
     }
   } else {
     // Fallback: simulate processing for demo
     console.log('No API keys found, using demo mode');
     await new Promise(resolve => setTimeout(resolve, 2000));
-    return imageUrl;
+    diagnostics.none = true;
+    return { processedImageUrl: imageUrl, diagnostics };
   }
 }
 
@@ -294,7 +305,7 @@ async function getProductImageUrl(dish: string): Promise<string> {
 }
 
 // Remove background using remove.bg API and return a data URL (base64) on success
-async function removeBackground(imageUrl: string, apiKey: string, request?: NextRequest): Promise<string | null> {
+async function removeBackground(imageUrl: string, apiKey: string, request?: NextRequest): Promise<{ url: string | null; status: number | null; errorText?: string; size?: number }> {
   try {
     const form = new FormData();
     form.append('image_url', imageUrl);
@@ -308,21 +319,24 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
       body: form as any,
     });
 
+    const status = response.status;
+
     if (!response.ok) {
       const text = await response.text();
-      console.error('remove.bg API error:', response.status, text);
-      return null;
+      console.error('remove.bg API error:', status, text);
+      return { url: null, status, errorText: text };
     }
 
     const contentType = response.headers.get('content-type') || 'image/png';
     const arrayBuffer = await response.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
+    const size = arrayBuffer.byteLength;
 
     // To let Fal.ai fetch the bg-removed image, store it temporarily via our own API
     if (!request) {
       // If we don't have the request to build an origin, fallback to data URL
       const dataUrl = `data:${contentType};base64,${base64}`;
-      return dataUrl;
+      return { url: dataUrl, status, size };
     }
 
     const origin = new URL(request.url).origin;
@@ -334,15 +348,16 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
     });
 
     if (!tempResp.ok) {
-      console.error('Failed to store temp image:', await tempResp.text());
+      const txt = await tempResp.text();
+      console.error('Failed to store temp image:', txt);
       // Fallback to data URL
-      return `data:${contentType};base64,${base64}`;
+      return { url: `data:${contentType};base64,${base64}`, status, size, errorText: txt };
     }
 
     const tempData = await tempResp.json();
-    return tempData.url || null;
-  } catch (error) {
+    return { url: tempData.url || null, status, size };
+  } catch (error: any) {
     console.error('removeBackground error:', error);
-    return null;
+    return { url: null, status: null, errorText: String(error) };
   }
 }
