@@ -63,6 +63,20 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
           diagnostics.removeBg = { error: String(err) };
         }
       }
+
+      // Optional stylize step (e.g., 1970s retro poster)
+      if (style && falKey) {
+        try {
+          console.log('Applying stylize step with style:', style);
+          const styled = await stylizeImage(finalUrl, style, falKey, imageSizeOption);
+          diagnostics.stylize = { url: styled };
+          if (styled) finalUrl = styled;
+        } catch (err) {
+          console.error('Stylize step failed:', err);
+          diagnostics.stylize = { error: String(err) };
+        }
+      }
+
       return { processedImageUrl: finalUrl, diagnostics };
     } catch (error) {
       console.error('Fal.ai failed, falling back to demo mode:', error);
