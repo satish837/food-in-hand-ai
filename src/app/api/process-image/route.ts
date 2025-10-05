@@ -193,7 +193,7 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
 
       // If the specialized model fails, fallback to a different approach
       console.log('Product holding model failed, trying alternative approach...');
-      return await processWithAlternativeApproach(imageUrl, dish, apiKey);
+      return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
     }
 
     const data = await response.json();
