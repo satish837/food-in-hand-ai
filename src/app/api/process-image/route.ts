@@ -159,6 +159,10 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       preserve_hands: true,
       preserve_aspect_ratio: true,
       preserve_resolution: true,
+      // Preserve transparency and indicate source has no background
+      preserve_alpha: true,
+      background: 'transparent',
+      output_transparency: true,
       // Stronger instructions to avoid cropping the head/face: expand canvas or pad when needed
       expand_canvas: true,
       canvas_padding: 0.18, // pad 18% around the detected subject to avoid tight crops
@@ -166,6 +170,9 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       keep_head_in_frame: true,
       crop_style: "full_body", // Keep full body/face when possible
       hand_position: "natural",
+      // Important: do NOT create extra persons or duplicate the subject
+      single_person_only: true,
+      no_duplication: true,
       // Use inpainting/mask-based blending to minimize distortion of person
       inpaint: true,
       inpaint_mode: "auto_mask",
@@ -173,6 +180,8 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       guidance_scale: 7.5,
       num_inference_steps: 22,
       image_strength: 0.72,
+      // Add explicit textual instructions for the model
+      instructions: `Place the ${dish} into the original person's hand. Do NOT add another person, do NOT duplicate or mirror the subject. Preserve the original person's face, hands, and proportions. Keep background transparent.`,
     } as any;
 
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
