@@ -76,7 +76,22 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
       console.log('Using Replicate API for image processing');
       const url = await processWithReplicate(imageUrl, dish, replicateToken);
       diagnostics.replicate = { used: true };
-      return { processedImageUrl: url, diagnostics };
+      let finalUrl = url;
+      if (removeBgKey) {
+        try {
+          console.log('Removing background from processed image (replicate) using remove.bg');
+          const bgResult = await removeBackground(finalUrl, removeBgKey, request);
+          diagnostics.removeBg = bgResult;
+          if (bgResult && bgResult.url) {
+            finalUrl = bgResult.url;
+            console.log('Background removed from processed (replicate) image:', finalUrl);
+          }
+        } catch (err) {
+          console.error('remove.bg failed on processed (replicate) image:', err);
+          diagnostics.removeBg = { error: String(err) };
+        }
+      }
+      return { processedImageUrl: finalUrl, diagnostics };
     } catch (error) {
       console.error('Replicate failed, falling back to demo mode:', error);
       diagnostics.replicate = { error: String(error) };
