@@ -70,7 +70,63 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
           console.log('Applying stylize step with style:', style);
           const styled = await stylizeImage(finalUrl, style, falKey, imageSizeOption);
           diagnostics.stylize = { url: styled };
-          if (styled) finalUrl = styled;
+
+          if (styled) {
+            // Upload stylized layer and original to Cloudinary and composite them
+            const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+            const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
+            const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
+
+            // helper to upload via Cloudinary (accepts URL or data URL)
+            async function uploadToCloudinary(imgUrl: string) {
+              if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) return null;
+              try {
+                const timestamp = Math.floor(Date.now() / 1000);
+                const crypto = await import('crypto');
+                const toSign = `timestamp=${timestamp}${CLOUD_SECRET}`;
+                const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+                const cloudForm = new FormData();
+                cloudForm.append('file', imgUrl);
+                cloudForm.append('api_key', CLOUD_KEY);
+                cloudForm.append('timestamp', String(timestamp));
+                cloudForm.append('signature', signature);
+
+                const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+                  method: 'POST',
+                  body: cloudForm as any,
+                });
+
+                if (!cloudResp.ok) {
+                  const txt = await cloudResp.text();
+                  console.error('Cloudinary upload failed:', cloudResp.status, txt);
+                  return null;
+                }
+
+                const cloudData = await cloudResp.json();
+                return { secure_url: cloudData.secure_url, public_id: cloudData.public_id };
+              } catch (e) {
+                console.error('uploadToCloudinary error:', e);
+                return null;
+              }
+            }
+
+            const uploadedStyled = await uploadToCloudinary(styled);
+            const uploadedOriginal = await uploadToCloudinary(finalUrl);
+
+            if (uploadedStyled && uploadedOriginal) {
+              const CLOUD_NAME_ENV = process.env.CLOUDINARY_CLOUD_NAME;
+              const styledId = uploadedStyled.public_id;
+              const originalId = uploadedOriginal.public_id;
+              // Build Cloudinary composite URL: overlay styled onto original
+              const compositeUrl = `https://res.cloudinary.com/${CLOUD_NAME_ENV}/image/upload/l_${encodeURIComponent(styledId)},fl_layer_apply/${originalId}.png`;
+              finalUrl = compositeUrl;
+              diagnostics.composite = { styled: uploadedStyled, original: uploadedOriginal, compositeUrl };
+            } else {
+              // fallback to use styled image directly
+              finalUrl = styled;
+            }
+          }
         } catch (err) {
           console.error('Stylize step failed:', err);
           diagnostics.stylize = { error: String(err) };
