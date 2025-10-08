@@ -62,9 +62,65 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
       if (style && falKey) {
         try {
           console.log('Applying stylize step with style:', style);
-          const styledFull = await stylizeImage(finalUrl, style, falKey, imageSizeOption, dish);
-          diagnostics.stylize = { url: styledFull };
-          if (styledFull) finalUrl = styledFull;
+
+          // Composite-preserve pipeline: generate stylized background and overlay the original person
+          if (style === 'composite_preserve') {
+            diagnostics.composite = { started: true };
+            // 1) Obtain transparent person from original image (prefer original for best preservation)
+            let personResult = null;
+            if (removeBgKey) {
+              try {
+                personResult = await removeBackground(imageUrl, removeBgKey, request);
+                diagnostics.removeBgPerson = personResult;
+              } catch (err) {
+                diagnostics.removeBgPerson = { error: String(err) };
+              }
+            }
+
+            const personUrl = (personResult && personResult.url) ? personResult.url : null;
+
+            // 2) Generate a stylized background (text-to-image) using Fal.ai
+            let styledBg = null;
+            try {
+              styledBg = await stylizeBackground(style + ' background', falKey, imageSizeOption, dish);
+              diagnostics.stylizeBackground = { url: styledBg };
+            } catch (err) {
+              diagnostics.stylizeBackground = { error: String(err) };
+            }
+
+            // 3) Upload both to Cloudinary and composite: overlay person over background
+            const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+            const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
+            const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
+
+            async function safeUpload(url: string | null) {
+              if (!url) return null;
+              try {
+                return await uploadToCloudinary(url);
+              } catch (e) {
+                console.error('safeUpload error', e);
+                return null;
+              }
+            }
+
+            const uploadedBg = await safeUpload(styledBg);
+            const uploadedPerson = await safeUpload(personUrl);
+
+            if (uploadedBg && uploadedPerson && uploadedBg.public_id && uploadedPerson.public_id && CLOUD_NAME) {
+              const bgId = uploadedBg.public_id;
+              const personId = uploadedPerson.public_id;
+              const compositeUrl = `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/l_${encodeURIComponent(personId)},fl_layer_apply/${bgId}.png`;
+              finalUrl = compositeUrl;
+              diagnostics.composite.result = { background: uploadedBg, person: uploadedPerson, compositeUrl };
+            } else {
+              // Fallbacks: prefer the styled background if available, else the personUrl, else keep previous finalUrl
+              finalUrl = uploadedBg ? uploadedBg.secure_url : (personUrl || finalUrl);
+            }
+          } else {
+            const styledFull = await stylizeImage(finalUrl, style, falKey, imageSizeOption, dish);
+            diagnostics.stylize = { url: styledFull };
+            if (styledFull) finalUrl = styledFull;
+          }
         } catch (err) {
           console.error('Stylize step failed:', err);
           diagnostics.stylize = { error: String(err) };
