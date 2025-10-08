@@ -182,7 +182,7 @@ export default function Home() {
                 Processing your image...
               </h3>
               <p className="text-gray-600">
-                Adding {selectedDish} to your photo using AI magic ✨
+                Adding your selected dish to your photo using AI magic ✨
               </p>
             </div>
           )}
