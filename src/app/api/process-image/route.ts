@@ -355,8 +355,10 @@ async function stylizeImage(imageUrl: string, style: string, apiKey: string, ima
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
 
+    const dishLabel = dish && (/^data:.+;base64,/.test(dish) || /^https?:\/\//.test(dish)) ? 'the dish' : (dish || 'the dish');
+
     const requestBody: any = {
-      prompt: `Convert the person image into a polished digital illustration and vector art with a cartoonish character design. Use smooth, clean lines and subtle gradients for shading. Apply a warm Indian Diwali color palette (yellows, oranges, browns). Dress the subject in Indian festival clothes (kurta, sherwani, or traditional attire). Keep the main subject isolated against a simple, uncluttered background. Ensure the subject is recognizable and is holding ${dish || 'the dish'} clearly. Clean, vibrant, professional aesthetic. No extra people, no text, no watermark.`,
+      prompt: `Convert the person image into a polished digital illustration and vector art with a cartoonish character design. Use smooth, clean lines and subtle gradients for shading. Apply a warm Indian Diwali color palette (yellows, oranges, browns). Dress the subject in Indian festival clothes (kurta, sherwani, or traditional attire). Keep the main subject isolated against a simple, uncluttered background. Ensure the subject is recognizable and is holding ${dishLabel} clearly. Clean, vibrant, professional aesthetic. No extra people, no text, no watermark.`,
       source_image_url: imageUrl,
       preserve_alpha: true,
       background: 'transparent',
