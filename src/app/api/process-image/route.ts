@@ -454,6 +454,91 @@ async function stylizeImage(imageUrl: string, style: string, apiKey: string, ima
   }
 }
 
+// Generate a stylized background using text-only prompt (Fal.ai text-to-image)
+async function stylizeBackground(promptStyle: string, apiKey: string, imageSize?: string, dish?: string): Promise<string | null> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 50000);
+
+    const prompt = `Background design for a polished digital illustration in warm Indian Diwali colors (yellows, oranges, browns). Keep it simple and clean with subtle gradients, soft radial vignette centered to highlight subject, minimal texture. Suitable as an isolated backdrop for a central figure holding a ${dish || 'dish'}.`;
+
+    const requestBody: any = {
+      prompt,
+      // No source image — pure generation
+      preserve_alpha: false,
+      background: 'transparent',
+      output_transparency: true,
+      image_size: imageSize || 'landscape_4_3',
+      num_inference_steps: 30,
+      guidance_scale: 7.5,
+      style: promptStyle,
+    };
+
+    const resp = await fetch('https://fal.run/fal-ai/flux/dev', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Key ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!resp.ok) {
+      const txt = await resp.text();
+      console.error('stylizeBackground failed:', resp.status, txt);
+      return null;
+    }
+
+    const data = await resp.json();
+    if (data.images && data.images.length > 0) return data.images[0].url;
+    return null;
+  } catch (err) {
+    console.error('stylizeBackground error:', err);
+    return null;
+  }
+}
+
+// Upload a remote image (or data URL) to Cloudinary and return secure_url and public_id
+async function uploadToCloudinary(imageUrl: string): Promise<{ secure_url: string; public_id: string } | null> {
+  const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
+  const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
+  const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
+  if (!CLOUD_NAME || !CLOUD_KEY || !CLOUD_SECRET) return null;
+
+  try {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const crypto = await import('crypto');
+    const toSign = `timestamp=${timestamp}${CLOUD_SECRET}`;
+    const signature = crypto.createHash('sha1').update(toSign).digest('hex');
+
+    const cloudForm = new FormData();
+    cloudForm.append('file', imageUrl);
+    cloudForm.append('api_key', CLOUD_KEY);
+    cloudForm.append('timestamp', String(timestamp));
+    cloudForm.append('signature', signature);
+
+    const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+      method: 'POST',
+      body: cloudForm as any,
+    });
+
+    if (!cloudResp.ok) {
+      const txt = await cloudResp.text();
+      console.error('Cloudinary upload failed:', cloudResp.status, txt);
+      return null;
+    }
+
+    const cloudData = await cloudResp.json();
+    return { secure_url: cloudData.secure_url, public_id: cloudData.public_id };
+  } catch (err) {
+    console.error('uploadToCloudinary error:', err);
+    return null;
+  }
+}
+
 async function fetchImageBuffer(imageUrl: string, request?: NextRequest): Promise<Buffer | null> {
   try {
     const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
