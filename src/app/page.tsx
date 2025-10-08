@@ -31,6 +31,7 @@ export default function Home() {
     setIsProcessing(true);
     setError(null);
     try {
+      const diwaliStyle = 'polished digital illustration / vector art, cartoonish character design with smooth lines and subtle gradients, warm Indian Diwali color palette (yellows, oranges, browns), subject in Indian festival clothes, simple uncluttered background, clean vibrant aesthetic';
       const response = await fetch('/api/process-image', {
         method: 'POST',
         headers: {
@@ -39,6 +40,7 @@ export default function Home() {
         body: JSON.stringify({
           imageUrl,
           dish,
+          style: diwaliStyle,
         }),
       });
 
