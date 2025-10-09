@@ -69,7 +69,7 @@ export default function ResultDisplay({
           🎉 Your Image is Ready!
         </h2>
         <p className="text-gray-600">
-          Here's your photo with {displayDish} added using AI magic
+          Here&apos;s your photo with {displayDish} added using AI magic
         </p>
       </div>
 
