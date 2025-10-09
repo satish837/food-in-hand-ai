@@ -18,6 +18,7 @@ export default function ResultDisplay({
 }: ResultDisplayProps) {
   const [isDownloading, setIsDownloading] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const displayDish = selectedDish && (selectedDish.startsWith('data:') || selectedDish.startsWith('http')) ? 'your dish' : selectedDish;
 
   const handleDownload = async () => {
     setIsDownloading(true);
@@ -68,7 +69,7 @@ export default function ResultDisplay({
           🎉 Your Image is Ready!
         </h2>
         <p className="text-gray-600">
-          Here's your photo with {selectedDish} added using AI magic
+          Here's your photo with {displayDish} added using AI magic
         </p>
       </div>
 
@@ -90,7 +91,7 @@ export default function ResultDisplay({
         {/* Processed Image */}
         <div className="space-y-4">
           <h3 className="text-xl font-semibold text-gray-900 text-center">
-            With {selectedDish}
+            With {displayDish}
           </h3>
           <div className="relative">
             <img

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { Check } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Check, Upload, Image as ImageIcon } from 'lucide-react';
+import { validateImageFile } from '@/lib/utils';
 
 interface DishSelectionProps {
   uploadedImage: string;
@@ -97,10 +98,29 @@ const dishes = [
 
 export default function DishSelection({ uploadedImage, onDishSelect }: DishSelectionProps) {
   const [selectedDish, setSelectedDish] = useState<string | null>(null);
+  const [customDish, setCustomDish] = useState<string | null>(null);
+  const [customError, setCustomError] = useState<string | null>(null);
+  const customFileRef = useRef<HTMLInputElement>(null);
 
   const handleDishSelect = (dish: any) => {
     setSelectedDish(dish.id);
     onDishSelect(dish.prompt);
+  };
+
+  const handleCustomDishFile = (file: File) => {
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setCustomError(validation.error || 'Invalid file');
+      return;
+    }
+    setCustomError(null);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const result = e.target?.result as string;
+      setCustomDish(result);
+      setSelectedDish('custom');
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -161,16 +181,54 @@ export default function DishSelection({ uploadedImage, onDishSelect }: DishSelec
             ))}
           </div>
 
-          {selectedDish && (
+          {/* Custom Dish Upload */}
+          <div className="mt-6">
+            <div className={`relative border-2 border-dashed rounded-xl p-6 text-center ${customDish ? 'border-orange-400 bg-orange-50' : 'border-gray-200'}`}>
+              <input
+                ref={customFileRef}
+                type="file"
+                accept="image/*"
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleCustomDishFile(file);
+                }}
+              />
+              {customDish ? (
+                <div>
+                  <div className="flex items-center justify-center gap-3 text-orange-600 mb-3">
+                    <ImageIcon className="w-5 h-5" />
+                    <span className="font-medium">Custom dish image selected</span>
+                  </div>
+                  <img src={customDish} alt="Custom dish preview" className="mx-auto h-28 w-28 object-cover rounded-lg shadow" />
+                </div>
+              ) : (
+                <div className="text-gray-600">
+                  <div className="flex justify-center mb-3">
+                    <div className="bg-orange-100 p-3 rounded-full"><Upload className="w-6 h-6 text-orange-500" /></div>
+                  </div>
+                  <p className="font-medium text-gray-900 mb-1">Or upload a plate/bowl photo</p>
+                  <p className="text-sm">Use your own dish image instead of presets</p>
+                </div>
+              )}
+            </div>
+            {customError && <p className="mt-2 text-sm text-red-600">{customError}</p>}
+          </div>
+
+          {(selectedDish || customDish) && (
             <div className="mt-6">
               <button
                 onClick={() => {
+                  if (selectedDish === 'custom' && customDish) {
+                    onDishSelect(customDish);
+                    return;
+                  }
                   const dish = dishes.find(d => d.id === selectedDish);
                   if (dish) onDishSelect(dish.prompt);
                 }}
                 className="w-full bg-orange-500 text-white py-4 rounded-xl font-semibold text-lg hover:bg-orange-600 transition-colors"
               >
-                Generate Image with {dishes.find(d => d.id === selectedDish)?.name}
+                {selectedDish === 'custom' ? 'Generate Image with Your Dish' : `Generate Image with ${dishes.find(d => d.id === selectedDish)?.name}`}
               </button>
             </div>
           )}
