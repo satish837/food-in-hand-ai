@@ -569,7 +569,7 @@ function getImageDimensionsFromBuffer(buf: Buffer): { width: number; height: num
       const width = buf.readUInt32BE(16);
       const height = buf.readUInt32BE(20);
       return { width, height };
-    } catch (e) { return null; }
+    } catch { return null; }
   }
   if (buf.toString('ascii', 0, 3) === 'GIF') {
     const width = buf.readUInt16LE(6);
