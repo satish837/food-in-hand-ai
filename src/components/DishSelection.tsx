@@ -14,7 +14,7 @@ const dishes = [
     id: 'pizza',
     name: 'Pizza',
     emoji: '🍕',
-    description: 'Classic Italian pizza slice',
+    description: 'Classic Italian pizza',
     prompt: 'a delicious pizza slice'
   },
   {
