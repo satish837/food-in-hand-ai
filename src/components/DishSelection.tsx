@@ -9,7 +9,15 @@ interface DishSelectionProps {
   onDishSelect: (dish: string) => void;
 }
 
-const dishes = [
+type DishOption = {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  prompt: string;
+};
+
+const dishes: DishOption[] = [
   {
     id: 'pizza',
     name: 'Pizza',
@@ -102,7 +110,7 @@ export default function DishSelection({ uploadedImage, onDishSelect }: DishSelec
   const [customError, setCustomError] = useState<string | null>(null);
   const customFileRef = useRef<HTMLInputElement>(null);
 
-  const handleDishSelect = (dish: any) => {
+  const handleDishSelect = (dish: DishOption) => {
     setSelectedDish(dish.id);
     onDishSelect(dish.prompt);
   };
