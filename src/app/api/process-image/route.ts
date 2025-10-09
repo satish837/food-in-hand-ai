@@ -546,7 +546,7 @@ async function uploadToCloudinary(imageUrl: string): Promise<{ secure_url: strin
 
 async function fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
   try {
-    const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
+    const dataUrlMatch = /^data:(.+);base64,([\s\S]+)$/.exec(imageUrl);
     if (dataUrlMatch) {
       const base64 = dataUrlMatch[2];
       return Buffer.from(base64, 'base64');
@@ -644,7 +644,7 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
   try {
     const form = new FormData();
 
-    const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
+    const dataUrlMatch = /^data:(.+);base64,([\s\S]+)$/.exec(imageUrl);
     if (dataUrlMatch) {
       const contentType = dataUrlMatch[1];
       const base64 = dataUrlMatch[2];
