@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateImagePrompt, generateNegativePrompt } from '@/lib/utils';
 
+// Diagnostics container without using `any`
+type Diagnostics = Record<string, unknown>;
+
 export async function POST(request: NextRequest) {
   try {
     const { imageUrl, dish, style } = await request.json();
@@ -28,14 +31,14 @@ export async function POST(request: NextRequest) {
   }
 }
 
-async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest, style?: string): Promise<{ processedImageUrl: string, diagnostics: any }> {
+async function processImageWithAI(imageUrl: string, dish: string, request?: NextRequest, style?: string): Promise<{ processedImageUrl: string; diagnostics: Diagnostics }> {
   const replicateToken = process.env.REPLICATE_API_TOKEN;
   const falKey = process.env.FAL_KEY;
   const removeBgKey = process.env.REMOVE_BG_API_KEY;
-  const diagnostics: any = { removeBg: null, fal: null, replicate: null };
+  const diagnostics: Diagnostics = { removeBg: null, fal: null, replicate: null };
 
-  let imageSizeOption = await detectFalImageSize(imageUrl, request);
-  diagnostics.imageSize = imageSizeOption;
+  const imageSizeOption = await detectFalImageSize(imageUrl);
+  (diagnostics as Diagnostics).imageSize = imageSizeOption;
 
   if (falKey) {
     try {
@@ -49,8 +52,8 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
           console.log('Removing background from processed image using remove.bg');
           const bgResult = await removeBackground(finalUrl, removeBgKey, request);
           diagnostics.removeBg = bgResult;
-          if (bgResult && bgResult.url) {
-            finalUrl = bgResult.url;
+          if (bgResult && (bgResult as { url?: string }).url) {
+            finalUrl = (bgResult as { url: string }).url;
             console.log('Background removed from processed image:', finalUrl);
           }
         } catch (err) {
@@ -67,7 +70,7 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
           if (style === 'composite_preserve') {
             diagnostics.composite = { started: true };
             // 1) Obtain transparent person from original image (prefer original for best preservation)
-            let personResult = null;
+            let personResult: { url?: string | null } | null = null;
             if (removeBgKey) {
               try {
                 personResult = await removeBackground(imageUrl, removeBgKey, request);
@@ -77,10 +80,10 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
               }
             }
 
-            const personUrl = (personResult && personResult.url) ? personResult.url : null;
+            const personUrl = personResult && personResult.url ? personResult.url : null;
 
             // 2) Generate a stylized background (text-to-image) using Fal.ai
-            let styledBg = null;
+            let styledBg: string | null = null;
             try {
               styledBg = await stylizeBackground(style + ' background', falKey, imageSizeOption, dish);
               diagnostics.stylizeBackground = { url: styledBg };
@@ -90,8 +93,6 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
 
             // 3) Upload both to Cloudinary and composite: overlay person over background
             const CLOUD_NAME = process.env.CLOUDINARY_CLOUD_NAME;
-            const CLOUD_KEY = process.env.CLOUDINARY_API_KEY;
-            const CLOUD_SECRET = process.env.CLOUDINARY_API_SECRET;
 
             async function safeUpload(url: string | null) {
               if (!url) return null;
@@ -111,7 +112,7 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
               const personId = uploadedPerson.public_id;
               const compositeUrl = `https://res.cloudinary.com/${CLOUD_NAME}/image/upload/l_${encodeURIComponent(personId)},fl_layer_apply/${bgId}.png`;
               finalUrl = compositeUrl;
-              diagnostics.composite.result = { background: uploadedBg, person: uploadedPerson, compositeUrl };
+              (diagnostics as Diagnostics).composite = { ...(diagnostics.composite as object), result: { background: uploadedBg, person: uploadedPerson, compositeUrl } };
             } else {
               // Fallbacks: prefer the styled background if available, else the personUrl, else keep previous finalUrl
               finalUrl = uploadedBg ? uploadedBg.secure_url : (personUrl || finalUrl);
@@ -137,7 +138,7 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
         try {
           const bgResult = await removeBackground(finalUrl, removeBgKey, request);
           diagnostics.removeBg = bgResult;
-          if (bgResult && bgResult.url) finalUrl = bgResult.url;
+          if (bgResult && (bgResult as { url?: string }).url) finalUrl = (bgResult as { url: string }).url;
         } catch (err) {
           diagnostics.removeBg = { error: String(err) };
         }
@@ -155,8 +156,8 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
           console.log('Removing background from processed (replicate) image using remove.bg');
           const bgResult = await removeBackground(finalUrl, removeBgKey, request);
           diagnostics.removeBg = bgResult;
-          if (bgResult && bgResult.url) {
-            finalUrl = bgResult.url;
+          if (bgResult && (bgResult as { url?: string }).url) {
+            finalUrl = (bgResult as { url: string }).url;
             console.log('Background removed from processed (replicate) image:', finalUrl);
           }
         } catch (err) {
@@ -184,7 +185,7 @@ async function processImageWithAI(imageUrl: string, dish: string, request?: Next
         try {
           const bgResult = await removeBackground(finalUrl, removeBgKey, request);
           diagnostics.removeBg = bgResult;
-          if (bgResult && bgResult.url) finalUrl = bgResult.url;
+          if (bgResult && (bgResult as { url?: string }).url) finalUrl = (bgResult as { url: string }).url;
         } catch (err) {
           diagnostics.removeBg = { error: String(err) };
         }
@@ -225,7 +226,7 @@ async function processWithReplicate(imageUrl: string, dish: string, apiToken: st
     }
 
     const data = await response.json();
-    let result = data;
+    let result = data as { id: string; status: string; output?: string[]; error?: string };
     while (result.status === 'starting' || result.status === 'processing') {
       await new Promise(resolve => setTimeout(resolve, 1000));
       const statusResponse = await fetch(`https://api.replicate.com/v1/predictions/${result.id}`, {
@@ -254,7 +255,7 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 90000);
 
-    const requestBody = {
+    const requestBody: Record<string, unknown> = {
       person_image_url: imageUrl,
       product_image_url: await getProductImageUrl(dish),
       preserve_face: true,
@@ -288,7 +289,7 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
       product_scale: 'natural',
       placement_target: ['right_hand','left_hand'],
       instructions: `Place the ${dish} into the original person's hand. Do NOT add another person or duplicate the subject. Preserve the person's face and hands and their proportions. Keep background transparent. Make sure the product is clearly visible and in contact with the subject's hand.`,
-    } as any;
+    };
 
     const response = await fetch('https://fal.run/fal-ai/image-apps-v2/product-holding', {
       method: 'POST',
@@ -310,17 +311,18 @@ async function processWithFal(imageUrl: string, dish: string, apiKey: string, im
     }
 
     const data = await response.json();
-    console.log('Fal.ai Product Holding response:', Array.isArray(data.images) ? `images:${data.images.length}` : JSON.stringify(data).slice(0, 200));
+    console.log('Fal.ai Product Holding response:', Array.isArray((data as { images?: unknown[] }).images) ? `images:${(data as { images: unknown[] }).images.length}` : JSON.stringify(data).slice(0, 200));
 
-    if (data.images && data.images.length > 0) {
-      console.log('Successfully generated product holding image:', data.images[0].url);
-      return data.images[0].url;
+    const images = (data as { images?: { url?: string }[] }).images;
+    if (images && images.length > 0 && images[0].url) {
+      console.log('Successfully generated product holding image:', images[0].url);
+      return images[0].url;
     } else {
       console.error('No images in response or unexpected format:', data);
       return await processWithAlternativeApproach(imageUrl, dish, apiKey, imageSize);
     }
-  } catch (error: any) {
-    if (error && error.name === 'AbortError') {
+  } catch (error: unknown) {
+    if (error && typeof error === 'object' && 'name' in error && (error as { name?: string }).name === 'AbortError') {
       console.error('Fal.ai API timeout');
       throw new Error('Request timed out. Please try again.');
     }
@@ -336,7 +338,7 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 70000);
 
-    const requestBody = {
+    const requestBody: Record<string, unknown> = {
       prompt: `Inpaint the original person image to add ${dish} in the person's hand. DO NOT CROP the person's head or face. Preserve the person's face and both hands exactly as in the input; do not alter aspect ratio or facial proportions. Expand canvas if needed to keep the full head visible. Keep background transparent. IMPORTANT: Do NOT add another person or duplicate the subject; only modify the existing person to hold the product. Remove any extra arms or duplicated limbs.`,
       source_image_url: imageUrl,
       product_image_url: await getProductImageUrl(dish),
@@ -369,7 +371,7 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
       product_scale: 'natural',
       placement_target: ['right_hand','left_hand'],
       negative_prompt: 'duplicate person, mirrored duplicate, multiple people, cloned subject, ghosting, artifact',
-    } as any;
+    };
 
     const response = await fetch('https://fal.run/fal-ai/flux/dev', {
       method: 'POST',
@@ -390,16 +392,17 @@ async function processWithAlternativeApproach(imageUrl: string, dish: string, ap
     }
 
     const data = await response.json();
-    console.log('Alternative approach response:', Array.isArray(data.images) ? `images:${data.images.length}` : JSON.stringify(data).slice(0,200));
+    console.log('Alternative approach response:', Array.isArray((data as { images?: unknown[] }).images) ? `images:${(data as { images: unknown[] }).images.length}` : JSON.stringify(data).slice(0,200));
 
-    if (data.images && data.images.length > 0) {
-      console.log('Successfully generated alternative image:', data.images[0].url);
-      return data.images[0].url;
+    const images = (data as { images?: { url?: string }[] }).images;
+    if (images && images.length > 0 && images[0].url) {
+      console.log('Successfully generated alternative image:', images[0].url);
+      return images[0].url;
     } else {
       console.error('No images returned from alternative approach:', data);
       throw new Error('No images returned from alternative approach');
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Alternative approach error (inpainting-focused):', error);
     throw error;
   }
@@ -413,7 +416,7 @@ async function stylizeImage(imageUrl: string, style: string, apiKey: string, ima
 
     const dishLabel = dish && (/^data:.+;base64,/.test(dish) || /^https?:\/\//.test(dish)) ? 'the dish' : (dish || 'the dish');
 
-    const requestBody: any = {
+    const requestBody: Record<string, unknown> = {
       prompt: `Convert the person image into a polished digital illustration and vector art with a cartoonish character design. Use smooth, clean lines and subtle gradients for shading. Apply a warm Indian Diwali color palette (yellows, oranges, browns). Dress the subject in Indian festival clothes (kurta, sherwani, or traditional attire). Keep the main subject isolated against a simple, uncluttered background. Ensure the subject is recognizable and is holding ${dishLabel} clearly. Clean, vibrant, professional aesthetic. No extra people, no text, no watermark.`,
       source_image_url: imageUrl,
       preserve_alpha: true,
@@ -446,7 +449,8 @@ async function stylizeImage(imageUrl: string, style: string, apiKey: string, ima
     }
 
     const data = await resp.json();
-    if (data.images && data.images.length > 0) return data.images[0].url;
+    const images = (data as { images?: { url?: string }[] }).images;
+    if (images && images.length > 0 && images[0].url) return images[0].url;
     return null;
   } catch (err) {
     console.error('stylizeImage error:', err);
@@ -462,7 +466,7 @@ async function stylizeBackground(promptStyle: string, apiKey: string, imageSize?
 
     const prompt = `Background design for a polished digital illustration in warm Indian Diwali colors (yellows, oranges, browns). Keep it simple and clean with subtle gradients, soft radial vignette centered to highlight subject, minimal texture. Suitable as an isolated backdrop for a central figure holding a ${dish || 'dish'}.`;
 
-    const requestBody: any = {
+    const requestBody: Record<string, unknown> = {
       prompt,
       // No source image — pure generation
       preserve_alpha: false,
@@ -493,7 +497,8 @@ async function stylizeBackground(promptStyle: string, apiKey: string, imageSize?
     }
 
     const data = await resp.json();
-    if (data.images && data.images.length > 0) return data.images[0].url;
+    const images = (data as { images?: { url?: string }[] }).images;
+    if (images && images.length > 0 && images[0].url) return images[0].url;
     return null;
   } catch (err) {
     console.error('stylizeBackground error:', err);
@@ -522,7 +527,7 @@ async function uploadToCloudinary(imageUrl: string): Promise<{ secure_url: strin
 
     const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
       method: 'POST',
-      body: cloudForm as any,
+      body: cloudForm,
     });
 
     if (!cloudResp.ok) {
@@ -531,7 +536,7 @@ async function uploadToCloudinary(imageUrl: string): Promise<{ secure_url: strin
       return null;
     }
 
-    const cloudData = await cloudResp.json();
+    const cloudData = await cloudResp.json() as { secure_url: string; public_id: string };
     return { secure_url: cloudData.secure_url, public_id: cloudData.public_id };
   } catch (err) {
     console.error('uploadToCloudinary error:', err);
@@ -539,7 +544,7 @@ async function uploadToCloudinary(imageUrl: string): Promise<{ secure_url: strin
   }
 }
 
-async function fetchImageBuffer(imageUrl: string, request?: NextRequest): Promise<Buffer | null> {
+async function fetchImageBuffer(imageUrl: string): Promise<Buffer | null> {
   try {
     const dataUrlMatch = /^data:(.+);base64,(.+)$/s.exec(imageUrl);
     if (dataUrlMatch) {
@@ -604,8 +609,8 @@ function mapDimsToFalImageSize(width: number | null, height: number | null): str
   return 'landscape_4_3';
 }
 
-async function detectFalImageSize(imageUrl: string, request?: NextRequest): Promise<string> {
-  const buf = await fetchImageBuffer(imageUrl, request);
+async function detectFalImageSize(imageUrl: string): Promise<string> {
+  const buf = await fetchImageBuffer(imageUrl);
   if (!buf) return 'landscape_4_3';
   const dims = getImageDimensionsFromBuffer(buf);
   if (!dims) return 'landscape_4_3';
@@ -657,7 +662,7 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
       headers: {
         'X-Api-Key': apiKey,
       },
-      body: form as any,
+      body: form,
     });
 
     const status = response.status;
@@ -692,11 +697,11 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
 
         const cloudResp = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
           method: 'POST',
-          body: cloudForm as any,
+          body: cloudForm,
         });
 
         if (cloudResp.ok) {
-          const cloudData = await cloudResp.json();
+          const cloudData = await cloudResp.json() as { secure_url?: string };
           if (cloudData && cloudData.secure_url) {
             return { url: cloudData.secure_url, status: cloudResp.status, size };
           }
@@ -727,9 +732,9 @@ async function removeBackground(imageUrl: string, apiKey: string, request?: Next
       return { url: `data:${contentType};base64,${base64}`, status, size, errorText: txt };
     }
 
-    const tempData = await tempResp.json();
+    const tempData = await tempResp.json() as { url?: string };
     return { url: tempData.url || null, status, size };
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('removeBackground error:', error);
     return { url: null, status: null, errorText: String(error) };
   }
